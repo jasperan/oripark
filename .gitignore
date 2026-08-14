@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Training results & artifacts (large, regenerable)
+results/
+*.gif
+demo_*.gif
+!docs/*.gif
+
+# Notebooks & caches
+.ipynb_checkpoints/
+.pytest_cache/
+*.egg-info/
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
