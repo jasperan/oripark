@@ -8,7 +8,7 @@ venv/
 results/
 *.gif
 demo_*.gif
-!docs/*.gif
+!docs/media/*.gif
 
 # Notebooks & caches
 .ipynb_checkpoints/

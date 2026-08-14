@@ -34,7 +34,7 @@ def load_policy(pt_path: str, role: str, tp: TrainParams, mp: MoveParams,
         ppo = PPO.load(pt_path, env=env, device=device)
         env.close()
         return ppo
-    ppo = make_ppo(env, tp, 0, device)
+    ppo = make_ppo(env, tp, 0, device, side=role)
     sd = torch.load(pt_path, map_location=device)
     ppo.policy.load_state_dict(sd)
     env.close()
@@ -71,7 +71,10 @@ def main():
                if os.path.exists(os.path.join(args.run, "chaser.zip"))
                else os.path.join(args.run, "pool_ch_0.pt"))
     ch_after = load_policy(ch_path, "chaser", tp, mp, ep, device)
-    ev_before = load_policy(os.path.join(args.run, "pool_ev_0.pt"), "evader", tp, mp, ep, device)
+    base_path = os.path.join(args.run, "evader_init.pt")
+    if not os.path.exists(base_path):
+        base_path = os.path.join(args.run, "pool_ev_0.pt")
+    ev_before = load_policy(base_path, "evader", tp, mp, ep, device)
     ev_after = load_policy(os.path.join(args.run, "evader.zip"), "evader", tp, mp, ep, device)
 
     clips = []

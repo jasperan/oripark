@@ -60,11 +60,13 @@ class EnvParams:
     max_steps: int = 1500                    # 25 s at 60 Hz
     catch_dist: float = 26.0                 # AABB half-extent sum for tag
     evader_spawn_x: int = 3
-    chaser_spawn_frac: float = 0.55          # fraction of arena width for chaser spawn
+    chaser_spawn_frac: float = 0.65          # fraction of arena width for chaser spawn
     # reward shaping: escape-oriented (portal >> survive-to-timeout)
     r_time: float = 0.002                    # tiny survival tick (timeout ≈ 0 total)
-    r_dist_gain: float = 0.015               # per 50 px of separation change
-    r_portal_progress: float = 0.02          # per 100 px of portal-distance reduction
+    r_dist_gain: float = 0.010               # per 50 px of separation change (secondary)
+    r_portal_progress: float = 0.05          # per 100 px of portal-distance reduction (primary)
+    r_milestone: float = 0.4                 # first-time crossing of each 128 px rightward zone
+    r_pass: float = 1.0                      # one-time bonus for getting past the chaser
     r_proximity: float = 0.004
     r_agility: float = 0.06
     r_portal: float = 3.0                    # clean escape — the dominant objective
@@ -90,8 +92,16 @@ class TrainParams:
     max_grad_norm: float = 0.5
     lr: float = 2.5e-4
     policy_net: list = field(default_factory=lambda: [256, 256])
-    blocks: int = 80
+    # asymmetric self-play: the protagonist (evader) gets more capacity and a
+    # faster learning rate than the adversary (chaser), keeping the fight fair
+    evader_net: list = field(default_factory=lambda: [256, 256])
+    chaser_net: list = field(default_factory=lambda: [128, 128])
+    evader_lr: float = 3.0e-4
+    chaser_lr: float = 1.5e-4
+    blocks: int = 150
     block_steps: int = 8192                  # per agent per block
+    save_every: int = 10                     # checkpoint models every N blocks (progress evals)
+    warmup_blocks: int = 30                  # both sides first train vs random opponents
     pool_size: int = 8                       # opponent snapshots kept per side
     opp_latest_prob: float = 0.6             # P(pick most recent opponent)
     eval_matches: int = 16                   # per block, latest-vs-latest

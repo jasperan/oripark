@@ -25,7 +25,8 @@ class TerrainAdversary:
         self.elites = elites
         self.target_wr = target_wr
         self.lo, self.hi = lo, hi
-        self.mu = np.full(self.dim, 0.5, dtype=np.float32)
+        self.mu = np.array([0.15, 0.15, 0.05, 0.2, 0.2, 0.05], dtype=np.float32)
+        self.easy_mu = self.mu.copy()          # easy-start fallback for the reset rule
         self.sigma = np.full(self.dim, sigma0, dtype=np.float32)
         self.history = []
 
@@ -51,12 +52,27 @@ class TerrainAdversary:
 
     # ------------------------------------------------------------------ update
     def update(self, eval_fn) -> dict:
-        """eval_fn(cands: (pop, 6)) -> evader win rates (pop,)."""
+        """eval_fn(cands: (pop, 6)) -> evader win rates (pop,).
+
+        Objective: keep the evader win rate near `target_wr`. If the whole
+        population is unwinnable (best wr < 0.25), all losses are equal and
+        the CEM would random-walk toward harder levels — instead pull the
+        distribution back toward easy params so the curriculum stays learnable.
+        """
         cands = np.clip(self.mu[None, :] + self.sigma[None, :] * self.rng.standard_normal((self.pop, self.dim)),
                         self.lo, self.hi)
         wrs = np.asarray(eval_fn(cands), dtype=np.float64)
         loss = np.abs(wrs - self.target_wr)
         idx = np.argsort(loss)[:self.elites]
+        if np.max(wrs) < 0.25 and self.rng.random() < 0.5:
+            # unwinnable population: drift back toward easy levels
+            self.mu = 0.6 * self.mu + 0.4 * self.easy_mu
+            self.sigma = np.clip(self.sigma * 1.2, 0.05, 1.0).astype(np.float32)
+            rec = {"mu": self.mu.copy(), "sigma": self.sigma.copy(),
+                   "wr_mean": float(wrs.mean()), "wr_std": float(wrs.std()),
+                   "elite_wr": float(wrs[idx].mean()), "reset_easy": True}
+            self.history.append(rec)
+            return rec
         elites = cands[idx]
         new_mu = elites.mean(axis=0)
         new_sigma = 0.8 * self.sigma + 0.2 * elites.std(axis=0) + 0.02
@@ -65,7 +81,7 @@ class TerrainAdversary:
         rec = {
             "mu": self.mu.copy(), "sigma": self.sigma.copy(),
             "wr_mean": float(wrs.mean()), "wr_std": float(wrs.std()),
-            "elite_wr": float(wrs[idx].mean()),
+            "elite_wr": float(wrs[idx].mean()), "reset_easy": False,
         }
         self.history.append(rec)
         return rec

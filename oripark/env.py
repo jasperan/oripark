@@ -134,6 +134,8 @@ class OriArenaVecEnv(VecEnv):
         self.prev_full = np.zeros((2 * n_envs, 5), dtype=np.int32)
         self.last_infos = [{} for _ in range(n_envs)]
         self.pending = []            # episode summaries awaiting drain
+        self.ev_milestone = np.zeros(n_envs, dtype=np.int32)   # rightward zones crossed
+        self.ev_passed = np.zeros(n_envs, dtype=bool)          # ever got ahead of chaser
 
         self._fresh_all()
 
@@ -175,6 +177,8 @@ class OriArenaVecEnv(VecEnv):
         self.t[:] = 0
         self.ev_agg[:] = 0
         self.ch_agg[:] = 0
+        self.ev_milestone[:] = np.floor(self.phys.x[: self.n_envs] / 128.0).astype(np.int32)
+        self.ev_passed[:] = False
         self.prev_full[:] = 0
 
     def _load_arena(self, i: int, arena):
@@ -314,6 +318,15 @@ class OriArenaVecEnv(VecEnv):
         r_ch = np.full(N, -ep.r_time, dtype=np.float32)
         r_ev += ep.r_dist_gain * np.clip(d_gain / 50.0, -1, 1)
         r_ev += ep.r_portal_progress * np.clip(p_gain / 100.0, -1, 1)
+        # milestone reward: first-time rightward progress (un-gameable, dense)
+        zone = np.floor(self.phys.x[ev] / 128.0).astype(np.int32)
+        gain = np.maximum(0, zone - self.ev_milestone)
+        r_ev += gain.astype(np.float32) * ep.r_milestone
+        self.ev_milestone = np.maximum(self.ev_milestone, zone)
+        # pass bonus: first time the evader gets ahead of the chaser
+        passed = (~self.ev_passed) & (self.phys.x[ev] > self.phys.x[ch])
+        r_ev += passed.astype(np.float32) * ep.r_pass
+        self.ev_passed |= passed
         r_ch += ep.r_dist_gain * np.clip(-d_gain / 50.0, -1, 1)
         r_ev -= ep.r_proximity * prox
         r_ch += ep.r_proximity * prox
@@ -358,6 +371,7 @@ class OriArenaVecEnv(VecEnv):
                     "arena_params": self.arenas[i].params.copy(),
                     "ev_agility": self.ev_agg[i].copy(),
                     "ch_agility": self.ch_agg[i].copy(),
+                    "ev_max_zone": int(self.ev_milestone[i]),
                 }
                 self._reset_one(i)
                 self.pending.append(infos[i])
@@ -377,5 +391,7 @@ class OriArenaVecEnv(VecEnv):
         self.t[i] = 0
         self.ev_agg[i] = 0
         self.ch_agg[i] = 0
+        self.ev_milestone[i] = int(np.floor(self.phys.x[i] / 128.0))
+        self.ev_passed[i] = False
         self.prev_full[i] = 0
         self.prev_full[self.n_envs + i] = 0

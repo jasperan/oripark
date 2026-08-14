@@ -136,14 +136,16 @@ def evaluate(ev_pol, ch_pol, sampler, mp, ep, n_envs: int, max_steps: int, seed:
             "avg_len": float(np.mean(lens)) if lens else 0.0}
 
 
-def make_ppo(env, tp: TrainParams, seed: int, device: str) -> PPO:
+def make_ppo(env, tp: TrainParams, seed: int, device: str, side: str = "evader") -> PPO:
+    net = tp.evader_net if side == "evader" else tp.chaser_net
+    lr = tp.evader_lr if side == "evader" else tp.chaser_lr
     return PPO(
         "MlpPolicy", env,
         n_steps=tp.n_steps, batch_size=tp.batch_size, n_epochs=tp.n_epochs,
         gamma=tp.gamma, gae_lambda=tp.gae_lambda, clip_range=tp.clip_range,
         ent_coef=tp.ent_coef, vf_coef=tp.vf_coef, max_grad_norm=tp.max_grad_norm,
-        learning_rate=lambda _progress: tp.lr,   # constant LR across self-play blocks
-        policy_kwargs=dict(net_arch=list(tp.policy_net)),
+        learning_rate=lambda _progress: lr,   # constant LR across self-play blocks
+        policy_kwargs=dict(net_arch=list(net)),
         seed=seed, device=device, verbose=0,
     )
 
@@ -160,13 +162,16 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
                              mp, ep, seed=tp.seed)
     boot_ch = OriArenaVecEnv("chaser", tp.n_envs, StaticSampler(gen, adv.mean_params(), rng),
                              mp, ep, seed=tp.seed + 1)
-    evader = make_ppo(boot_ev, tp, tp.seed, device)
-    chaser = make_ppo(boot_ch, tp, tp.seed + 1, device)
+    evader = make_ppo(boot_ev, tp, tp.seed, device, side="evader")
+    chaser = make_ppo(boot_ch, tp, tp.seed + 1, device, side="chaser")
 
     # league pools (snapshot[0] = random init, used for "before" demos)
     ev_pool = [deepcopy(evader.policy)]
     ch_pool = [deepcopy(chaser.policy)]
     elo_ev, elo_ch = Elo(), Elo()
+    # true untrained baselines (the league pool trims old snapshots)
+    torch.save(ev_pool[0].state_dict(), os.path.join(out_dir, "evader_init.pt"))
+    torch.save(ch_pool[0].state_dict(), os.path.join(out_dir, "chaser_init.pt"))
 
     # pre-created eval sampler: mean adversary params, fixed seeds -> stable Elo
     eval_sampler = StaticSampler(gen, adv.mean_params(), np.random.default_rng(4242))
@@ -176,9 +181,17 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
     for block in range(tp.blocks):
         t0 = time.time()
         # ---------------- train evader vs sampled chaser ----------------
-        opp = sample_opponent(ch_pool, rng, tp.opp_latest_prob)
+        # warmup: train the evader against a random chaser so it learns level
+        # traversal / escapes before the adversarial chase begins
+        if block < tp.warmup_blocks:
+            opp = None
+            opp_name = "random"
+        else:
+            opp = sample_opponent(ch_pool, rng, tp.opp_latest_prob)
+            opp_name = "pool"
         env = OriArenaVecEnv("evader", tp.n_envs, adv, mp, ep,
-                             opponent=frozen_policy(opp), seed=tp.seed + block)
+                             opponent=None if opp is None else frozen_policy(opp),
+                             seed=tp.seed + block)
         evader.env = env
         evader.learn(total_timesteps=tp.block_steps,
                      callback=_Drain(env, metrics, "evader"),
@@ -197,9 +210,14 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
             ev_pool.pop(0)
 
         # ---------------- train chaser vs sampled evader ----------------
-        opp = sample_opponent(ev_pool, rng, tp.opp_latest_prob)
+        # (during warmup the chaser also plays a random evader)
+        if block < tp.warmup_blocks:
+            opp = None
+        else:
+            opp = sample_opponent(ev_pool, rng, tp.opp_latest_prob)
         env = OriArenaVecEnv("chaser", tp.n_envs, adv, mp, ep,
-                             opponent=frozen_policy(opp), seed=tp.seed + block + 1000)
+                             opponent=None if opp is None else frozen_policy(opp),
+                             seed=tp.seed + block + 1000)
         chaser.env = env
         chaser.learn(total_timesteps=tp.block_steps,
                      callback=_Drain(env, metrics, "chaser"),
@@ -223,6 +241,9 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
                 cands, evader.policy, chaser.policy, gen, mp, ep, tp, device))
 
         # ---------------- block record ----------------
+        if block % tp.save_every == 0 or block == tp.blocks - 1:
+            evader.save(os.path.join(out_dir, f"evader_b{block:03d}.zip"))
+            chaser.save(os.path.join(out_dir, f"chaser_b{block:03d}.zip"))
         ev_eps = [r for r in metrics.episodes if r.get("side") == "evader"]
         tr_ev = metrics.summarize_episodes(ev_eps)
         tr_ch = metrics.summarize_episodes([r for r in metrics.episodes if r.get("side") == "chaser"])
@@ -233,6 +254,7 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
             "elo_evader": round(elo_ev.rating, 1), "elo_chaser": round(elo_ch.rating, 1),
             "eval_ev_win_rate": round(score2, 3),
             "tr_ev_len": tr_ev.get("avg_len", 0), "tr_ch_len": tr_ch.get("avg_len", 0),
+            "tr_ev_zone": tr_ev.get("avg_zone", 0),
             "tr_ev_win_rate": tr_ev.get("win_rate", 0),
             "tr_ev_dashes": tr_ev.get("ev_dashes", 0), "tr_ev_walljumps": tr_ev.get("ev_walljumps", 0),
             "tr_ev_djumps": tr_ev.get("ev_djumps", 0), "tr_ev_bashes": tr_ev.get("ev_bashes", 0),
@@ -247,7 +269,7 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
         summary = {"evader": tr_ev, "chaser": tr_ch, "adv": adv_rec, "adv_mu": list(adv.mu)}
         print(f"[block {block:3d}] elo ev={rec['elo_evader']:6.1f} ch={rec['elo_chaser']:6.1f} | "
               f"eval ev-wr={rec['eval_ev_win_rate']:.2f} esc={n_ev_esc} | "
-              f"len ev={rec['tr_ev_len']:5.0f} ch={rec['tr_ch_len']:5.0f} | "
+              f"len ev={rec['tr_ev_len']:5.0f} ch={rec['tr_ch_len']:5.0f} zone={rec['tr_ev_zone']:3.0f} | "
               f"agility ev(dash={rec['tr_ev_dashes']:.1f} wj={rec['tr_ev_walljumps']:.1f} dj={rec['tr_ev_djumps']:.1f} "
               f"bash={rec['tr_ev_bashes']:.1f}) | adv_wr={rec['adv_wr'] if rec['adv_wr'] is not None else 0:.2f} | {rec['time_s']:.0f}s",
               flush=True)
@@ -260,6 +282,7 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
     for i, pol in enumerate(ch_pool):
         torch.save(pol.state_dict(), os.path.join(out_dir, f"pool_ch_{i}.pt"))
     np.save(os.path.join(out_dir, "adv_mu.npy"), adv.mu)
+    np.save(os.path.join(out_dir, "adv_sigma.npy"), adv.sigma)
     metrics.plot()
     print(f"\nSaved results to {out_dir}: evader.zip, chaser.zip, pool snapshots, curves.png")
     return summary

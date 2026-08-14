@@ -71,6 +71,7 @@ class Metrics:
         ch_a = np.stack([e["ch_agility"] for e in eps])
         lens = np.array([e["episode"]["l"] for e in eps])
         outs = [e["outcome"] for e in eps]
+        zones = np.array([e.get("ev_max_zone", 0) for e in eps])
         return {
             "n": len(eps),
             "win_rate": float(np.mean([e["ev_win"] for e in eps])),
@@ -80,6 +81,7 @@ class Metrics:
             "ch_hazard": outs.count("ch_hazard"),
             "timeout": outs.count("timeout"),
             "avg_len": float(lens.mean()),
+            "avg_zone": float(zones.mean()),
             "ev_dashes": float(ev_a[:, 0].mean()),
             "ev_walljumps": float(ev_a[:, 1].mean()),
             "ev_djumps": float(ev_a[:, 2].mean()),

@@ -6,6 +6,17 @@ trained by a **self-play league of two adversarial neural-network policies**
 (an agile evader vs a pursuer), with a **third adversarial learner** (a CEM
 level generator) that keeps the curriculum at the edge of the agents' skill.
 
+> **Untrained vs trained evader, same arena, same chaser** (untrained
+> wanders and times out; the trained evader escapes through the light
+> portal in ~6 seconds):
+>
+> ![improvement](docs/media/evader_improvement.gif)
+>
+> Escape rate over self-play training on fixed arenas: **0% (random) →
+> 0-5% (early) → 23-54% (late) → 30% (final)** — see
+> [docs/RESULTS.md](docs/RESULTS.md) and the
+> [progress curve](docs/media/progress_curve.png).
+
 ```
               ┌─────────────────────────────────────────────────┐
               │  OriArenaVecEnv (vectorized numpy, 120 Hz phys) │
@@ -52,23 +63,27 @@ map.
 
 ## The three adversarial learners
 
-1. **Evader (PPO)** — full Ori kit. Rewards: survival time, distance gained
-   from the chaser, agility usage (dash/wall-jump/double-jump/bash), big
-   reward for reaching the portal, penalty for being caught or hitting spikes.
+1. **Evader (PPO)** — full Ori kit. Rewards: portal progress + rightward
+   milestones (dense, un-gameable), a one-time bonus for passing the chaser,
+   survival time, separation gain, agility usage (dash/wall-jump/
+   double-jump/bash), +3 for escaping through the portal, penalties for
+   being caught or hitting spikes, -3 for failing to escape before timeout.
 2. **Chaser (PPO)** — same physics minus bash. Rewards mirror the evader's:
    closing distance, proximity, catching, penalty when the evader escapes.
 3. **Terrain adversary (cross-entropy method)** — a small policy over the 6
    arena parameters (gap scale, tower height, spike probability, orb count,
    wander, dash-gap frequency). It is updated to keep the evader's win rate
    near 50%, so levels stay just past the agents' current skill — the
-   classic asymmetric-self-play curriculum.
+   classic asymmetric-self-play curriculum. It starts from easy levels and
+   hardens only as the evader learns to win.
 
-Self-play loop (`oripark/selfplay.py`): alternate training blocks. Each
-block trains one PPO against a snapshot sampled from the opponent's league
-pool (60% latest, 40% older checkpoints — prevents degenerate cycling).
-Latest-vs-latest evaluations update two-player Elo ratings. Agility metrics
-(dashes, wall jumps, double jumps, bashes, airtime per episode) are logged
-per block and plotted.
+Self-play loop (`oripark/selfplay.py`): a **warmup phase** (both sides train
+against random opponents so traversal/escape skills develop first), then
+**alternating training blocks**. Each block trains one PPO against a snapshot
+sampled from the opponent's league pool (60% latest, 40% older checkpoints —
+prevents degenerate cycling). Latest-vs-latest evaluations update two-player
+Elo ratings. Agility metrics (dashes, wall jumps, double jumps, bashes,
+airtime, max traversal zone per episode) are logged per block and plotted.
 
 ## Run it
 
@@ -78,20 +93,20 @@ python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 # quick smoke test (~1 min)
 ./.venv/bin/python train.py --quick
 
-# real self-play run (defaults: 80 blocks, 16 parallel arenas, GPU)
-./.venv/bin/python train.py --blocks 80 --out results/run1
+# real self-play run (defaults: 120 blocks, 16 parallel arenas)
+./.venv/bin/python train.py --blocks 120 --out results/run1
 
-# render demos: untrained (block 0) vs trained, same arena seed
+# render demos: random baseline vs trained, same arena seed
 ./.venv/bin/python demo.py --run results/run1 --mode both --arena-seed 4242 --out demo.gif
 
-# head-to-head eval report (markdown)
-./.venv/bin/python eval.py --run results/run1 --matches 40
+# head-to-head eval report vs the untrained baseline (markdown)
+./.venv/bin/python eval.py --run results/run1 --matches 40 --baseline
 ```
 
 Outputs in `results/<run>/`: `blocks.jsonl` (per-block Elo/win-rate/agility),
 `episodes.jsonl` (every episode), `curves.png` (learning curves),
 `evader.zip`/`chaser.zip` (final policies), `pool_ev_*.pt`/`pool_ch_*.pt`
-(league snapshots — `pool_ev_0.pt` is the untrained baseline for
+(league snapshots — `evader_init.pt` is the untrained baseline for
 before/after demos), `adv_mu.npy` (final terrain-adversary parameters).
 
 ## Structure

@@ -40,9 +40,10 @@ class ArenaGenerator:
     [5] dash_gap_prob  wide same-level gaps requiring dash / full-speed jump
     """
 
-    def __init__(self, p: MoveParams, rng: np.random.Generator):
+    def __init__(self, p: MoveParams, rng: np.random.Generator, chaser_frac: float = 0.65):
         self.p = p
         self.rng = rng
+        self.chaser_frac = chaser_frac
         self.W, self.H = p.arena_w, p.arena_h
 
     def generate(self, params: np.ndarray, seed: int | None = None) -> Arena:
@@ -174,7 +175,7 @@ class ArenaGenerator:
         grid[portal_cell[1], portal_cell[0]] = PORTAL
         portal = ((portal_cell[0] + 0.5) * p.tile, (portal_cell[1] + 0.5) * p.tile)
 
-        mid = int(self.W * 0.55)
+        mid = int(self.W * self.chaser_frac)
         ch_pl = min(platforms[1:], key=lambda pl: abs(pl[0] + pl[2] / 2 - mid)) \
             if len(platforms) > 2 else platforms[-1]
         cx0, cy0, cw0 = ch_pl
