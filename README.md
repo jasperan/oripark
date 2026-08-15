@@ -10,12 +10,11 @@ level generator) that keeps the curriculum at the edge of the agents' skill.
 > wanders and times out; the trained evader escapes through the light
 > portal in ~6 seconds):
 >
-> ![improvement](docs/media/evader_improvement.gif)
+> ![improvement](docs/media/evader_improvement_v3.gif)
 >
-> Escape rate over self-play training on fixed arenas: **0% (random) →
-> 0-5% (early) → 23-54% (late) → 30% (final)** — see
-> [docs/RESULTS.md](docs/RESULTS.md) and the
-> [progress curve](docs/media/progress_curve.png).
+> Escape rate on **hard arenas** (60 matches, frozen chaser): **17% random
+> → 31% BC → 48% trained (2.8×)** — see [docs/RESULTS.md](docs/RESULTS.md)
+> and the [progress curve](docs/media/progress_curve_v3.png).
 
 ```
               ┌─────────────────────────────────────────────────┐
