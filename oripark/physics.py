@@ -313,12 +313,17 @@ class OriPhysics:
         hw = p.half_w
         hh = p.half_h
         nx = self.x + self.vx * dt
-        # probe leading edge at 3 heights
+        # probe leading edge at 3 heights (head, center, feet)
         edge = nx + np.sign(self.vx) * hw
         probes = self._probe_cells(
             np.stack([edge, edge, edge], axis=1),
             np.stack([self.y - hh, self.y, self.y + hh], axis=1),
         )
+        # the feet probe is only a *wall* if the tile directly below the
+        # agent's center is NOT solid — otherwise it is just the floor the
+        # agent stands on (grounded running must not be blocked by ground)
+        under = self._probe_y(self.x, self.y + hh + 1.0)
+        probes[:, 2] = np.where(under == SOLID, 0, probes[:, 2])
         hit = np.any(probes == SOLID, axis=1)
         moving = np.abs(self.vx) > 1e-6
         hit = hit & moving

@@ -104,12 +104,17 @@ class TrainParams:
     warmup_blocks: int = 30                  # both sides first train vs random opponents
     pool_size: int = 8                       # opponent snapshots kept per side
     opp_latest_prob: float = 0.6             # P(pick most recent opponent)
+    bc_episodes: int = 400                   # scripted demos for BC pretraining
+    bc_epochs: int = 8                       # BC epochs (0 = skip behavior cloning)
+    bc_reg_every: int = 5                    # BC fine-tune the evader every N blocks
+    bc_reg_epochs: int = 1                   # BC epochs per fine-tune
+    bc_reg_lr_frac: float = 0.2              # fine-tune LR as fraction of evader_lr
     eval_matches: int = 16                   # per block, latest-vs-latest
     eval_ep_len: int = 360                   # 6 s cap for eval matches
     adv_update_every: int = 4                # terrain adversary CEM cadence
     adv_pop: int = 6
     adv_elites: int = 3
-    adv_matches: int = 2
+    adv_matches: int = 4
     adv_sigma0: float = 0.30
     adv_target_wr: float = 0.50
     seed: int = 0

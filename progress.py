@@ -93,7 +93,7 @@ def main():
     rng = np.random.default_rng(1)
     gen = ArenaGenerator(mp, rng, chaser_frac=ep.chaser_spawn_frac)
     mu = np.load(os.path.join(args.run, "adv_mu.npy")) if os.path.exists(os.path.join(args.run, "adv_mu.npy")) else np.full(6, 0.5)
-    sig = np.load(os.path.join(args.run, "adv_sigma.npy")) if os.path.exists(os.path.join(args.run, "adv_sigma.npy")) else np.full(6, 0.3)
+    sig = np.minimum(np.load(os.path.join(args.run, "adv_sigma.npy")) if os.path.exists(os.path.join(args.run, "adv_sigma.npy")) else np.full(6, 0.3), 0.25)
 
     # fixed arena set sampled once from the final adversary distribution
     arng = np.random.default_rng(4242)

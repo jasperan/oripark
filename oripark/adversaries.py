@@ -67,7 +67,7 @@ class TerrainAdversary:
         if np.max(wrs) < 0.25 and self.rng.random() < 0.5:
             # unwinnable population: drift back toward easy levels
             self.mu = 0.6 * self.mu + 0.4 * self.easy_mu
-            self.sigma = np.clip(self.sigma * 1.2, 0.05, 1.0).astype(np.float32)
+            self.sigma = np.clip(self.sigma * 0.9, 0.05, 0.35).astype(np.float32)
             rec = {"mu": self.mu.copy(), "sigma": self.sigma.copy(),
                    "wr_mean": float(wrs.mean()), "wr_std": float(wrs.std()),
                    "elite_wr": float(wrs[idx].mean()), "reset_easy": True}
@@ -75,9 +75,11 @@ class TerrainAdversary:
             return rec
         elites = cands[idx]
         new_mu = elites.mean(axis=0)
-        new_sigma = 0.8 * self.sigma + 0.2 * elites.std(axis=0) + 0.02
+        # sigma tracks the elite spread but decays back toward sigma0 so the
+        # curriculum never random-walks into an exploded search distribution
+        new_sigma = 0.8 * self.sigma + 0.2 * elites.std(axis=0)
         self.mu = new_mu.astype(np.float32)
-        self.sigma = np.clip(new_sigma, 0.05, 1.0).astype(np.float32)
+        self.sigma = np.clip(new_sigma, 0.05, 0.35).astype(np.float32)
         rec = {
             "mu": self.mu.copy(), "sigma": self.sigma.copy(),
             "wr_mean": float(wrs.mean()), "wr_std": float(wrs.std()),

@@ -28,6 +28,8 @@ def load_policy(pt_path: str, role: str, tp: TrainParams, mp: MoveParams,
     from oripark.arena import ArenaGenerator
     from oripark.env import OriArenaVecEnv
     rng = np.random.default_rng(0)
+    torch.manual_seed(0)          # reproducible stochastic replays
+    np.random.seed(0)
     gen = ArenaGenerator(mp, rng)
     env = OriArenaVecEnv(role, 1, StaticSampler(gen, np.full(6, 0.5), rng), mp, ep, seed=0)
     if pt_path.endswith(".zip"):
@@ -48,6 +50,8 @@ def main():
     ap.add_argument("--arena-seed", type=int, default=4242)
     ap.add_argument("--out", default="demo.gif")
     ap.add_argument("--max-steps", type=int, default=1500)
+    ap.add_argument("--stochastic", action="store_true",
+                    help="sample evader actions (deterministic argmax gets stuck)")
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--scale", type=float, default=0.5)
     ap.add_argument("--ascii", action="store_true", help="also print an ASCII replay")
@@ -59,6 +63,8 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     rng = np.random.default_rng(0)
+    torch.manual_seed(0)          # reproducible stochastic replays
+    np.random.seed(0)
     gen = ArenaGenerator(mp, rng)
     if os.path.exists(os.path.join(args.run, "adv_mu.npy")):
         mu = np.load(os.path.join(args.run, "adv_mu.npy"))
@@ -79,7 +85,7 @@ def main():
 
     clips = []
     if args.mode in ("before", "both"):
-        rec = ReplayRecorder(arena, ev_before, ch_after, mp, ep, seed=7)
+        rec = ReplayRecorder(arena, ev_before, ch_after, mp, ep, deterministic=not args.stochastic, seed=7)
         fr, out = rec.run(args.max_steps)
         rec.close()
         print(f"before: outcome={out} len={len(fr)}")
@@ -87,7 +93,7 @@ def main():
         if args.ascii:
             print(ascii_frames(fr, arena, mp))
     if args.mode in ("after", "both"):
-        rec = ReplayRecorder(arena, ev_after, ch_after, mp, ep, seed=7)
+        rec = ReplayRecorder(arena, ev_after, ch_after, mp, ep, deterministic=not args.stochastic, seed=7)
         fr, out = rec.run(args.max_steps)
         rec.close()
         print(f"after : outcome={out} len={len(fr)}")

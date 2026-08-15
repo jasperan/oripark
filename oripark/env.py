@@ -108,7 +108,8 @@ class OriArenaVecEnv(VecEnv):
     metadata = {"render.modes": []}
 
     def __init__(self, role: str, n_envs: int, sampler, move: MoveParams,
-                 ep: EnvParams, opponent=None, seed: int = 0):
+                 ep: EnvParams, opponent=None, seed: int = 0,
+                 chaser_ghost: bool = False, opp_acts_fn=None):
         assert role in ("evader", "chaser")
         self.role = role
         self.n_envs = n_envs
@@ -116,6 +117,8 @@ class OriArenaVecEnv(VecEnv):
         self.p = move
         self.ep = ep
         self.opponent = opponent
+        self.chaser_ghost = chaser_ghost      # park the chaser out of the way
+        self.opp_acts_fn = opp_acts_fn        # privileged-state opponent policy
         self.rng = np.random.default_rng(seed)
 
         self.obs_dim = 24 + ep.patch_w * ep.patch_h + (4 if role == "chaser" else 0)
@@ -194,6 +197,10 @@ class OriArenaVecEnv(VecEnv):
         self.phys.place(np.array([arena.ev_spawn[0], arena.ch_spawn[0]]),
                         np.array([arena.ev_spawn[1], arena.ch_spawn[1]]),
                         ground=True, idx=[ei, ci])
+        if self.chaser_ghost:
+            # park the chaser in the top-left wall corner, out of the evader's
+            # way, so traversal demos / BC data measure pure movement skill
+            self.phys.place(np.array([16.0]), np.array([16.0]), ground=False, idx=[ci])
 
     @staticmethod
     def _orbs_for(arena) -> np.ndarray:
@@ -246,6 +253,10 @@ class OriArenaVecEnv(VecEnv):
         if self.opponent is not None:
             opp_obs = obs_both["chaser" if self.role == "evader" else "evader"]
             opp_acts = np.asarray(self.opponent(opp_obs)).reshape(N, -1).astype(np.int32)
+        elif self.opp_acts_fn is not None:
+            opp_acts = np.asarray(self.opp_acts_fn(self)).reshape(N, -1).astype(np.int32)
+        elif self.chaser_ghost:
+            opp_acts = np.zeros((N, 3), dtype=np.int32)   # parked chaser: idle
         else:
             if self.role == "evader":            # opponent = chaser (3 dims)
                 opp_acts = self.rng.integers([9, 2, 2], size=(N, 3)).astype(np.int32)
@@ -302,6 +313,8 @@ class OriArenaVecEnv(VecEnv):
         caught = self.phys.aabb_overlap(self.phys, ev, ch)
         died_ev = self.phys.died[ev] & ~caught
         died_ch = self.phys.died[ch] & ~caught
+        if self.chaser_ghost:
+            died_ch[:] = False            # ghost deaths must not end episodes
         esc = self.phys.escaped[ev] & ~caught & ~died_ev & ~died_ch
         timeout = self.t >= ep.max_steps
         done = caught | died_ev | died_ch | esc | timeout

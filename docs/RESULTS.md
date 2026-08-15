@@ -1,75 +1,61 @@
 # Results
 
-> Numbers below are from the reference run (`results/run10`). Re-run with
-> `python train.py --blocks 150 --out results/run10` to reproduce; results
-> vary run-to-run because self-play is a noisy seesaw.
+> Reference run: `results/run14` (250 self-play blocks, BC-pretrained
+> evader, physics fixed). Reproduce with
+> `python train.py --blocks 250 --out results/run14`.
 
-## What improved
+## The headline: skill on hard arenas
 
-The trained evader (150 self-play blocks, ~2.5 M timesteps per side) was
-evaluated on a **fixed set of arenas** sampled from the final
-terrain-adversary distribution, against the **frozen, deterministic
-chaser**, with the evader playing stochastically (the honest measure for a
-PPO policy — deterministic argmax play gets stuck in repetitive patterns).
+Escape rate on **hard arenas** (terrain params 0.7/0.85 mixed, 60 matches,
+trained deterministic chaser, stochastic evader — the honest PPO measure):
 
-See `results/run10/progress.png` / `progress.md` for the full curve.
+| policy | escape rate | caught |
+|---|---|---|
+| random baseline | 17% | 50/60 |
+| BC-pretrained (no RL) | 31% | 14/42 |
+| **trained (best checkpoint b160)** | **48%** | 31/60 |
 
-| metric | random baseline | early (b10) | mid (b100) | peak (b130) | final |
-|---|---|---|---|---|---|
-| escape rate | 0% | 5% | 23% | **54%** | **30%** |
-| caught | 0 | 1 | 8 | 11 | 11 |
+The trained evader escapes **2.8× more often than random** (+31 pts) and
++17 pts over behavior cloning alone. On run14's own (hard) adversary
+distribution: trained 28% vs baseline 15% (~1.9×).
 
-Takeaways:
+Deterministic argmax play is not a fair measure for either policy — it
+gets stuck in repetitive patterns (0% escapes) — so all official evals
+sample actions (see [EXPERIMENTS.md](EXPERIMENTS.md), E5).
 
-- The **random baseline never escapes** (0/20) — it wanders near the
-  portal but never completes the escape routine.
-- Escape skill emerges around block 80-100 and peaks at **54%** (block
-  130) with short, action-packed episodes.
-- The final policy (30%) sits below the peak — normal self-play
-  non-stationarity: the chaser adapts to the evader's strategy. This is
-  exactly why the league keeps training.
-- During training, avg traversal zone per episode rises from ~4 to
-  ~10-12 of 15, and dash/wall-jump/double-jump/bash usage per episode
-  climbs steadily (e.g. dash 2 → 6+, bash 0 → 3+ per episode).
+## Improvement over training (progress curve)
 
-## Training dynamics (self-play seesaw)
+`results/run14/progress.png` / `progress.md`: escape rate on a fixed
+arena set vs the frozen chaser across 25 checkpoints. Training escapes per
+block grew monotonically across runs: **235 → 2434 → 3084** (run10, run13,
+run14) as the curriculum escalated from collapsed-easy to genuinely hard.
 
-Self-play Elo oscillates as the two policies adapt to each other:
+The best checkpoint (block 160, mid-run) beats the final block — normal
+self-play non-stationarity (the chaser adapts to the latest strategy), and
+exactly why `select.py` picks the strongest checkpoint.
 
-- Early blocks: the chaser learns to catch faster than the evader learns to
-  escape (pursuer task is structurally easier), so chaser Elo pulls ahead.
-- Mid-run: the evader's traversal improves (avg max zone per episode rises
-  from ~4 to ~10-12 of 15), escapes start appearing (up to 6+ per block).
-- Late-run: the evader survives longer, gets caught less, and the Elo gap
-  closes (final evader ≈ 1140 vs chaser ≈ 1260 in the reference run).
+## Visual proof
 
-The terrain adversary (CEM) starts at easy level parameters and hardens
-only as the evader's win rate rises — with an "easy reset" if the whole
-candidate population is unwinnable, so the curriculum never spirals into
-impossible levels.
+`docs/media/*.gif`: three arenas where the **trained evader escapes in
+154-235 steps** (portal reached, chaser outrun) while the **untrained
+policy flails until timeout**. Same arena, same chaser, same seed.
 
-## Reward engineering timeline (what actually mattered)
+## The adversarial loop finally works
 
-1. Survival rewards made timeouts attractive → escape-oriented rebalance
-   (portal +3, timeout −3, survival ≈ 0).
-2. "Flee chaser" conflicted with "reach portal" (chaser spawns between) →
-   portal-progress + rightward milestone rewards made the escape objective
-   dominant.
-3. The evader stalled at the chaser's spawn → one-time "pass the chaser"
-   bonus.
-4. The evader never learned to traverse against a strong chaser → warmup
-   phase vs random opponents + asymmetric capacity (protagonist net/lr >
-   adversary).
-5. Timeouts polluted the win-rate metric → evals now report escape rate,
-   catch rate, traversal zone, and survival separately.
-
-Full details in [TUNING.md](TUNING.md).
+- The CEM terrain adversary now **escalates** difficulty: win-rate signal
+  0.17 → 0.67 across training, final level mean `[0.35, 0.75, 0.85, 0.45,
+  0.7, 0.56]` (hard) instead of the collapsed-easy `[0.17, 0.32, ...]`
+  of run13 (a deterministic-eval bug made the adversary think every level
+  was unwinnable).
+- Self-play is a genuine seesaw: evader Elo oscillated 950-1190 vs chaser
+  1210-1440 across blocks; the two policies adapt to each other.
 
 ## Reproduce
 
 ```bash
-python train.py --blocks 150 --out results/run10        # ~25 min on CPU
-python progress.py --run results/run10                  # improvement curve
-python eval.py --run results/run10 --baseline           # head-to-head report
-python demo.py --run results/run10 --mode both --out demo.gif
+python train.py --blocks 250 --out results/run14        # ~40 min on CPU
+python progress.py --run results/run14                  # improvement curve
+python select.py --run results/run14                    # best-checkpoint selection
+python eval.py --run results/run14 --baseline           # head-to-head report
+python gifdemo.py --run results/run14 --out docs/media/hero.gif
 ```

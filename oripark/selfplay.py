@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import time
-from copy import deepcopy
 
 import numpy as np
 import torch
@@ -86,7 +85,10 @@ def _cand_eval(cands, ev_pol, ch_pol, gen, mp, ep, tp, device) -> np.ndarray:
     wrs = np.zeros(n_cand)
     counts = np.zeros(n_cand)
     for _ in range(tp.eval_ep_len):
-        a = ev_pol.predict(obs, deterministic=True)[0]
+        # stochastic play — the honest measure; deterministic argmax gets
+        # stuck in repetitive patterns and would report wr=0 everywhere,
+        # collapsing the whole curriculum to easy levels
+        a = ev_pol.predict(obs, deterministic=False)[0]
         obs, _, done, infos = env.step(a)
         for i, info in enumerate(infos):
             if "episode" in info:
@@ -150,6 +152,40 @@ def make_ppo(env, tp: TrainParams, seed: int, device: str, side: str = "evader")
     )
 
 
+def clone_policy(policy, env, tp: TrainParams, seed: int, device: str,
+                 side: str = "evader"):
+    """Copy a policy via state_dict — torch deepcopy breaks after optimizer
+    steps (parameters become non-leaf tensors)."""
+    clone = make_ppo(env, tp, seed, device, side=side)
+    clone.policy.load_state_dict(policy.state_dict())
+    return clone.policy
+
+
+def _scripted_chaser_acts(n_envs, mp, ep):
+    """Build an opp_acts_fn driving ScriptedChaser pursuers from privileged
+    state (used to collect duel demos with real chase pressure)."""
+    from oripark.scripted import ScriptedChaser
+    chasers = [ScriptedChaser(mp, ep) for _ in range(n_envs)]
+    last = [None] * n_envs
+
+    def fn(env):
+        N = env.n_envs
+        acts = []
+        for i in range(N):
+            ci = N + i
+            if last[i] is None or env.t[i] == 0:
+                chasers[i].reset(env.arenas[i])
+                last[i] = env.t[i]
+            ph = env.phys
+            acts.append(chasers[i].act(
+                env.arenas[i], ph.x[ci], ph.y[ci], ph.vx[ci], ph.vy[ci],
+                ph.on_ground[ci], ph.wall_dir[ci], ph.can_dash[ci],
+                ph.dash_t[ci], ph.facing[ci], ph.x[i]))
+        return np.stack(acts)
+
+    return fn
+
+
 def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: str = "auto"):
     os.makedirs(out_dir, exist_ok=True)
     rng = np.random.default_rng(tp.seed)
@@ -166,12 +202,34 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
     chaser = make_ppo(boot_ch, tp, tp.seed + 1, device, side="chaser")
 
     # league pools (snapshot[0] = random init, used for "before" demos)
-    ev_pool = [deepcopy(evader.policy)]
-    ch_pool = [deepcopy(chaser.policy)]
+    ev_pool = [clone_policy(evader.policy, boot_ev, tp, tp.seed, device, "evader")]
+    ch_pool = [clone_policy(chaser.policy, boot_ch, tp, tp.seed + 1, device, "chaser")]
     elo_ev, elo_ch = Elo(), Elo()
     # true untrained baselines (the league pool trims old snapshots)
     torch.save(ev_pool[0].state_dict(), os.path.join(out_dir, "evader_init.pt"))
     torch.save(ch_pool[0].state_dict(), os.path.join(out_dir, "chaser_init.pt"))
+
+    # ---- behavior cloning: pretrain the evader on scripted expert demos ----
+    bc_demos = None
+    if getattr(tp, "bc_epochs", 0) > 0:
+        from oripark.scripted import ScriptedEvader, collect_demos
+        from oripark.bc import behavior_clone
+        demos_env = OriArenaVecEnv(
+            "evader", tp.n_envs,
+            StaticSampler(gen, adv.mean_params(), np.random.default_rng(tp.seed + 2)),
+            mp, ep, seed=tp.seed + 2, chaser_ghost=True)
+        scripts = [ScriptedEvader(mp, ep) for _ in range(tp.n_envs)]
+        obs_list, act_list, _ = collect_demos(
+            demos_env, scripts, n_episodes=tp.bc_episodes, max_steps=ep.max_steps,
+            require_escape=True, seed=0)
+        demos_env.close()
+        if obs_list:
+            behavior_clone(evader.policy, obs_list, act_list,
+                           epochs=tp.bc_epochs, lr=tp.evader_lr, device=device)
+            bc_demos = (obs_list, act_list)
+            # the BC'd policy is now the "before" baseline for demos/evals
+            torch.save(evader.policy.state_dict(), os.path.join(out_dir, "evader_init.pt"))
+            ev_pool[0] = clone_policy(evader.policy, boot_ev, tp, tp.seed, device, "evader")
 
     # pre-created eval sampler: mean adversary params, fixed seeds -> stable Elo
     eval_sampler = StaticSampler(gen, adv.mean_params(), np.random.default_rng(4242))
@@ -196,6 +254,16 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
         evader.learn(total_timesteps=tp.block_steps,
                      callback=_Drain(env, metrics, "evader"),
                      reset_num_timesteps=False)
+        env.close()
+
+        # ---- BC regularization: keep the evader anchored to expert traversal
+        if bc_demos is not None and block % tp.bc_reg_every == 0:
+            from oripark.bc import behavior_clone
+            obs_list, act_list = bc_demos
+            k = max(1, len(obs_list) // 2)          # subsample for speed
+            behavior_clone(evader.policy, obs_list[:k], act_list[:k],
+                           epochs=tp.bc_reg_epochs,
+                           lr=tp.evader_lr * tp.bc_reg_lr_frac, device=device)
 
         # ---------------- eval + snapshot evader ----------------
         res = evaluate(evader.policy, chaser.policy, eval_sampler, mp, ep,
@@ -205,7 +273,7 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
         r_opp = elo_ch.rating
         elo_ev.update(r_opp, score)
         elo_ch.update(elo_ev.rating, 1.0 - score)
-        ev_pool.append(deepcopy(evader.policy))
+        ev_pool.append(clone_policy(evader.policy, boot_ev, tp, tp.seed, device, "evader"))
         if len(ev_pool) > tp.pool_size:
             ev_pool.pop(0)
 
@@ -230,7 +298,7 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
         score2 = (res2["wins"] + 0.5 * res2["draws"]) / max(n2, 1)
         elo_ev.update(elo_ch.rating, score2)
         elo_ch.update(elo_ev.rating, 1.0 - score2)
-        ch_pool.append(deepcopy(chaser.policy))
+        ch_pool.append(clone_policy(chaser.policy, boot_ch, tp, tp.seed + 1, device, "chaser"))
         if len(ch_pool) > tp.pool_size:
             ch_pool.pop(0)
 

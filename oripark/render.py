@@ -32,6 +32,7 @@ class ReplayRecorder:
     def __init__(self, arena: Arena, ev_pol, ch_pol, mp: MoveParams, ep: EnvParams,
                  deterministic: bool = True, seed: int = 0):
         self.mp, self.ep = mp, ep
+        self.det = deterministic
         sampler = SingleArenaSampler(arena)
         self.env = OriArenaVecEnv("evader", 1, sampler, mp, ep,
                                   opponent=frozen_policy(ch_pol, deterministic), seed=seed)
@@ -43,7 +44,7 @@ class ReplayRecorder:
         outcome = "timeout"
         ph = self.env.phys
         for t in range(max_steps):
-            a = self.ev_pol.predict(obs, deterministic=True)[0]
+            a = self.ev_pol.predict(obs, deterministic=self.det)[0]
             obs, _, done, infos = self.env.step(a)
             frames.append({
                 "t": t,
