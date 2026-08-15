@@ -18,7 +18,7 @@ from oripark.adversaries import StaticSampler  # noqa: E402
 from oripark.arena import ArenaGenerator  # noqa: E402
 from oripark.config import EnvParams, MoveParams, TrainParams  # noqa: E402
 from oripark.render import ReplayRecorder, ascii_frames, make_gif  # noqa: E402
-from oripark.selfplay import make_ppo  # noqa: E402
+from oripark.selfplay import make_ppo, set_nets_from_run  # noqa: E402
 
 
 def load_policy(pt_path: str, role: str, tp: TrainParams, mp: MoveParams,
@@ -58,6 +58,7 @@ def main():
     args = ap.parse_args()
 
     tp = TrainParams()
+    set_nets_from_run(tp, args.run)
     mp = MoveParams()
     ep = EnvParams()
     device = "cuda" if torch.cuda.is_available() else "cpu"

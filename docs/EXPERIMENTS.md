@@ -86,3 +86,69 @@ portal.
   but couldn't finish.
 - Training escapes ramped 4 → 26 → 92 per 30 blocks (blocks 0-30, 60-90,
   120-150): the skill was there, the finish was the problem.
+
+## E6 — physics fidelity: WotW wall climb, fall gravity, terminal velocity
+- **Motivation**: the WotW video review (IGN, first 17 minutes) showed the
+  signature wall-climb (hold toward a wall → Ori climbs, no jump needed)
+  and snappy descents — the old model only had wall-JUMP chains and uniform
+  gravity.
+- **Fix**: hold-into-wall while touching climbs at `climb_speed=170 px/s`;
+  rising probe's toward-wall side is neutralized while climbing (else the
+  climbed wall counts as a ceiling and climbing can never start);
+  `fall_gravity_mult=1.12` (snappy descent), `max_fall=1600` (terminal
+  velocity, also prevents tile tunnelling at speed).
+- **Verified**: full jump apex 144 px (4.5 tiles — unchanged), wall climb
+  rises at 170 px/s, terminal fall caps at 1600. Scripted expert now
+  escapes 100% of mid-difficulty arenas even vs the strong scripted chaser
+  (before: 4%!) — wall climb is a big power-up for both sides.
+
+## E7 — hindsight reward shaping
+- **Finding**: failures teach nothing about partial progress — "got 80% of
+  the way then caught" and "got 5%" were equally punished, so the value
+  function under-weights the final approach.
+- **Fix**: track best-ever portal distance per episode; on any non-escape
+  termination add `r_hindsight=1.5 × (1 − best/spawn)` — a hindsight-style
+  credit for how close the run came, directly into PPO's terminal signal.
+
+## E8 — chaser-strength curriculum (self-play ladder)
+- **Finding**: the evader jumped straight from a random opponent to the
+  LATEST (strongest) chaser every block; no gradual pressure ramp.
+- **Fix**: `sample_ladder_opponent` anneals the latest-snapshot probability
+  0.10 → 0.65 over 120 blocks, and when NOT picking the latest it weights
+  OLD (weak) snapshots more early on — a natural difficulty ladder carved
+  out of self-play history. The evader learns to beat weak chasers first,
+  then progressively stronger ones.
+
+## E9 — flee-aware BC demos
+- **Finding**: the scripted evader now escapes 100% of arenas even vs the
+  competent scripted chaser (wall climb + flee rules), so REAL-chaser
+  demos contain no pressure — nothing to imitate.
+- **Fix**: BC corpus is two-phase — traversal demos (ghost chaser) plus
+  "pursued" demos where a fake chaser hovers 120 px behind, triggering the
+  expert's flee rules (dash bursts, hops) so the NN starts self-play
+  already knowing how to run with a pursuer on its heels.
+
+## E10 — the chaser-strength LADDER backfired (run15)
+- **Finding**: feeding the evader old/weak chaser snapshots early made the
+  CEM see high win-rates and escalate difficulty faster than the learner
+  could consolidate. Late training the evader was still losing to the
+  strong chaser (eval-wr 0.19), the CEM reset to easy, and hard-arena
+  skill stayed at +7 pts over random (vs +31 without the ladder in
+  run14-era physics). The CEM's win-rate signal is only meaningful
+  against the STRONGEST opponent.
+- **Fix**: revert to latest-chaser 60% sampling + cap the CEM mu move at
+  0.12/update so the curriculum cannot outrun the learner.
+
+## E11 — asymmetric wall-climb (the balance fix)
+- **Finding**: after physics v2, the chaser used wall-climb too and
+  nullified the evader's escape routes; every run's evader plateaued at
+  ~1150 Elo while the chaser hit 1250+. The game had no movement
+  asymmetry.
+- **Fix**: climb is evader-only (`can_climb` flag) — game-faithful (Ori's
+  spirit kit vs a pursuer that can't climb). Combined with a 384² net +
+  lr 4e-4, the evader hit its all-time peak (Elo 1310, eval-wr 0.93 at
+  block 20) and the curriculum converged to near-max spike density
+  (0.92). Hard-arena skill: trained 47% vs random 37% vs BC 35%.
+- **Note**: the deterministic chaser is partly exploitable by chaos
+  (random escapes 37% of hard arenas), so escape rates are only
+  meaningful relative to the random/BC baselines.

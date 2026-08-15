@@ -104,3 +104,29 @@ ground-only arenas).
 
 Everything is seeded (`TrainParams.seed`); deterministic eval uses
 `fixed_seed_sample` so Elo compares like-for-like arenas across blocks.
+
+## Round 3 lessons (run15/16 — physics v2 + RL levers)
+
+- **Physics v2 (wall climb, fall gravity, terminal velocity) is a neutral
+  difficulty shift but a big feel win**: the scripted expert jumped from
+  4% → 100% escape vs the competent scripted chaser (wall climb is that
+  strong), and both learned policies shifted from wall-jump chains
+  (wj ≈ 4-5/block) to wall climbing (wj ≈ 1-2/block) automatically.
+- **The chaser-strength LADDER backfired**: feeding the evader weak
+  chasers early made the CEM see high win rates and escalate difficulty
+  faster than the learner could consolidate; late training the evader was
+  still losing to the strong chaser (eval-wr 0.19), the CEM reset to easy,
+  and hard-arena skill stayed at +7 pts over random (vs +31 without the
+  ladder). The CEM's win-rate signal is only meaningful against the
+  STRONGEST opponent.
+- **Fixes for run16**: revert to latest-chaser 60% sampling (run14's
+  proven recipe) + a per-update CEM mu-move cap (0.12) so the curriculum
+  cannot run ahead of the learner.
+- **Keep**: flee-aware BC demos (fake chaser −120 px — the real scripted
+  chaser can't pressure the expert anymore) and hindsight reward shaping
+  (best-portal credit on failure).
+- **Eval discipline**: hard-arena escape (uniform 0.7/0.85 params, 60
+  matches, stochastic evader vs frozen deterministic chaser) is the only
+  metric that transfers across curriculum states; the run's own arena set
+  follows the final adversary mu, which can be easy or hard depending on
+  where the curriculum ended.

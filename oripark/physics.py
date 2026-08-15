@@ -53,6 +53,7 @@ class OriPhysics:
         self.buffer = z.copy()
         self.can_djump = np.ones(n, dtype=bool)
         self.can_dash = np.ones(n, dtype=bool)
+        self.can_climb = np.ones(n, dtype=bool)   # evader-only wall climb (Ori lore)
         self.dash_t = z.copy()
         self.dash_dx = np.ones(n, dtype=np.float32)
         self.dash_dy = z.copy()
@@ -109,6 +110,7 @@ class OriPhysics:
         self.can_dash[idx] = True
         self.dash_t[idx] = 0.0
         self.bash_cd[idx] = 0.0
+        self.can_climb[idx] = True
         self.wall_grace[idx] = 0.0
         self.buffer[idx] = 0.0
         self.coyote[idx] = 0.0
@@ -214,6 +216,12 @@ class OriPhysics:
         if np.any(move_x != 0):
             self.facing = np.where(move_x != 0, move_x, self.facing)
 
+        # --- WotW wall climb: press INTO a wall while touching it to climb up
+        # (no jump needed). Wall jump still fires on jump press. This is the
+        # signature WotW movement our wall-jump-only model was missing.
+        toward_wall = (self.wall_dir != 0) & (move_x == self.wall_dir)
+        climbing = toward_wall & (~dashing) & (~self.died) & self.can_climb
+
         # --- horizontal acceleration / braking (disabled while dashing)
         vx = self.vx
         if np.any(~dashing):
@@ -226,13 +234,21 @@ class OriPhysics:
         over = (~dashing) & (np.abs(vx) > p.max_run)
         vx = np.where(over, vx - np.sign(vx) * np.minimum(np.abs(vx) - p.max_run, p.post_dash_decay * dt), vx)
 
-        # --- vertical: gravity or wall slide (disabled while dashing)
+        # --- vertical: gravity, wall slide, or wall climb (disabled while dashing)
         vy = self.vy
-        sliding = (~on_g) & (self.wall_dir != 0) & (vy >= 0) & (~dashing)
-        g = p.gravity * np.where((vy < 0) & (~sliding), p.rise_gravity_mult, 1.0)
+        sliding = (~on_g) & (self.wall_dir != 0) & (vy >= 0) & (~dashing) & (~climbing)
+        rising = vy < 0
+        g = p.gravity * np.where(rising & (~sliding) & (~climbing),
+                                 p.rise_gravity_mult, p.fall_gravity_mult)
         vy = np.where(sliding,
                       np.minimum(vy + p.wall_slide_accel * dt, p.wall_slide_max),
-                      vy + np.where(dashing, 0.0, g * dt))
+                      vy + np.where(dashing | climbing, 0.0, g * dt))
+        # climbing overrides: rise at climb_speed, leave the ground
+        vy = np.where(climbing, -p.climb_speed, vy)
+        self.on_ground[climbing] = False
+        self._climbing = climbing
+        # terminal velocity on falls (snappy WotW descent, no tunnelling)
+        vy = np.where((~dashing) & (~climbing), np.minimum(vy, p.max_fall), vy)
 
         # --- jumps (wall jump first; it consumes the buffer)
         buffered = self.buffer > 0
@@ -356,9 +372,17 @@ class OriPhysics:
         hh = p.half_h
         self.on_ground[:] = False
         ny = self.y + self.vy * dt
+        px = np.stack([self.x - hw, self.x, self.x + hw], axis=1)
+        # WotW wall climb: while climbing, the side probe inside the climbed
+        # wall must not count as a ceiling — neutralize it so the agent can
+        # rise along the face (only real ceilings/floors block climbing)
+        if np.any(self._climbing):
+            side_col = np.where(self.wall_dir > 0, 2, 0)
+            px[np.arange(self.n)[self._climbing], side_col[self._climbing]] = \
+                self.x[self._climbing]
         edge = ny + np.sign(self.vy) * hh
         probes = self._probe_cells(
-            np.stack([self.x - hw, self.x, self.x + hw], axis=1),
+            px,
             np.stack([edge, edge, edge], axis=1),
         )
         hit = np.any(probes == SOLID, axis=1)

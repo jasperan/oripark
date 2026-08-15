@@ -139,6 +139,9 @@ class OriArenaVecEnv(VecEnv):
         self.pending = []            # episode summaries awaiting drain
         self.ev_milestone = np.zeros(n_envs, dtype=np.int32)   # rightward zones crossed
         self.ev_passed = np.zeros(n_envs, dtype=bool)          # ever got ahead of chaser
+        # hindsight: best portal distance achieved this episode (init at spawn)
+        self.best_portal = np.zeros(n_envs, dtype=np.float32)
+        self.spawn_portal = np.zeros(n_envs, dtype=np.float32)
 
         self._fresh_all()
 
@@ -197,6 +200,12 @@ class OriArenaVecEnv(VecEnv):
         self.phys.place(np.array([arena.ev_spawn[0], arena.ch_spawn[0]]),
                         np.array([arena.ev_spawn[1], arena.ch_spawn[1]]),
                         ground=True, idx=[ei, ci])
+        # game-faithful asymmetry: the evader (Ori) can wall-climb, the
+        # pursuer cannot — climb is part of the hero's spirit kit
+        self.phys.can_climb[ci] = False
+        self.best_portal[i] = float(np.hypot(self.phys.portals[ei, 0] - self.phys.x[ei],
+                                             self.phys.portals[ei, 1] - self.phys.y[ei]))
+        self.spawn_portal[i] = self.best_portal[i]
         if self.chaser_ghost:
             # park the chaser in the top-left wall corner, out of the evader's
             # way, so traversal demos / BC data measure pure movement skill
@@ -324,6 +333,7 @@ class OriArenaVecEnv(VecEnv):
         portal_after = np.hypot(self.phys.portals[ev, 0] - self.phys.x[ev],
                                 self.phys.portals[ev, 1] - self.phys.y[ev])
         p_gain = portal_before - portal_after
+        self.best_portal = np.minimum(self.best_portal, portal_after)
 
         # --- rewards
         prox = np.clip((200.0 - dist_after) / 200.0, 0, 1)
@@ -355,6 +365,12 @@ class OriArenaVecEnv(VecEnv):
         r_ch = np.where(died_ch, ep.r_hazard, r_ch)
         r_ev = np.where(timeout, ep.r_timeout, r_ev)
         r_ch = np.where(timeout, -ep.r_timeout, r_ch)
+        # --- hindsight shaping: credit best-ever portal progress on failure,
+        # so "got 80% of the way then caught" teaches more than "got 5%"
+        if self.role == "evader":
+            hint = ep.r_hindsight * np.clip(
+                1.0 - self.best_portal / np.maximum(self.spawn_portal, 1.0), 0, 1)
+            r_ev += hint * (done & ~esc).astype(np.float32)
 
         # --- agility counters
         self.ev_agg[:, 0] += ev_dash_u.astype(np.int32)

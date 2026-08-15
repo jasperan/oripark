@@ -21,7 +21,7 @@ from stable_baselines3 import PPO  # noqa: E402
 from oripark.arena import Arena, ArenaGenerator  # noqa: E402
 from oripark.config import EnvParams, MoveParams, TrainParams  # noqa: E402
 from oripark.env import OriArenaVecEnv  # noqa: E402
-from oripark.selfplay import frozen_policy, make_ppo  # noqa: E402
+from oripark.selfplay import frozen_policy, make_ppo, set_nets_from_run  # noqa: E402
 
 
 def load(path, role, tp, mp, ep):
@@ -90,6 +90,7 @@ def main():
     args = ap.parse_args()
 
     tp, mp, ep = TrainParams(), MoveParams(), EnvParams()
+    set_nets_from_run(tp, args.run)
     rng = np.random.default_rng(1)
     gen = ArenaGenerator(mp, rng, chaser_frac=ep.chaser_spawn_frac)
     mu = np.load(os.path.join(args.run, "adv_mu.npy")) if os.path.exists(os.path.join(args.run, "adv_mu.npy")) else np.full(6, 0.5)

@@ -32,10 +32,48 @@ def frozen_policy(policy, deterministic: bool = False):
     return act
 
 
+def infer_net_arch(path: str):
+    """Read the policy net_arch from a saved PPO zip (works without an env
+    — SB3 pickles the spaces and policy_kwargs). Used so .pt baseline shells
+    are built with the same architecture the run was trained with."""
+    from stable_baselines3 import PPO
+    p = PPO.load(path, device="cpu")
+    arch = p.policy_kwargs.get("net_arch", [256, 256])
+    del p
+    return list(arch)
+
+
+def set_nets_from_run(tp: TrainParams, run_dir: str):
+    """Align tp.evader_net/chaser_net with the saved policies in run_dir."""
+    ev = os.path.join(run_dir, "evader.zip")
+    ch = os.path.join(run_dir, "chaser.zip")
+    if os.path.exists(ev):
+        tp.evader_net = infer_net_arch(ev)
+    if os.path.exists(ch):
+        tp.chaser_net = infer_net_arch(ch)
+
+
 def sample_opponent(pool, rng, latest_prob: float):
     if len(pool) == 1 or rng.random() < latest_prob:
         return pool[-1]
     return pool[int(rng.integers(0, len(pool) - 1))]
+
+
+def sample_ladder_opponent(pool, rng, block: int, tp: TrainParams):
+    """Chaser-strength curriculum: anneal latest-prob from a low start so the
+    evader first faces OLD (weak) chaser snapshots and progressively the
+    strongest. When not picking the latest, older snapshots are weighted more
+    heavily early on — a natural difficulty ladder from self-play history."""
+    if len(pool) == 1:
+        return pool[-1]
+    frac = min(1.0, block / max(1, tp.ladder_blocks))
+    p_latest = tp.opp_latest_start + (tp.opp_latest_end - tp.opp_latest_start) * frac
+    if rng.random() < p_latest:
+        return pool[-1]
+    n = len(pool) - 1
+    w = np.arange(n, 0, -1, dtype=float)          # oldest gets most weight early
+    w = (1 - frac) * w / w.sum() + frac * np.ones(n) / n
+    return pool[int(rng.choice(n, p=w / w.sum()))]
 
 
 class _Drain(BaseCallback):
@@ -179,8 +217,8 @@ def _scripted_chaser_acts(n_envs, mp, ep):
             ph = env.phys
             acts.append(chasers[i].act(
                 env.arenas[i], ph.x[ci], ph.y[ci], ph.vx[ci], ph.vy[ci],
-                ph.on_ground[ci], ph.wall_dir[ci], ph.can_dash[ci],
-                ph.dash_t[ci], ph.facing[ci], ph.x[i]))
+                ph.on_ground[ci], ph.wall_dir[ci], ph.can_djump[ci], ph.can_dash[ci],
+                ph.dash_t[ci], ph.facing[ci], ph.x[i], ph.y[i]))
         return np.stack(acts)
 
     return fn
@@ -214,15 +252,33 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
     if getattr(tp, "bc_epochs", 0) > 0:
         from oripark.scripted import ScriptedEvader, collect_demos
         from oripark.bc import behavior_clone
+        n_flee = int(tp.bc_episodes * getattr(tp, "bc_flee_frac", 0.0))
+        n_trav = tp.bc_episodes - n_flee
+        # Phase A: traversal demos (ghost chaser) — pure movement skill
         demos_env = OriArenaVecEnv(
             "evader", tp.n_envs,
             StaticSampler(gen, adv.mean_params(), np.random.default_rng(tp.seed + 2)),
             mp, ep, seed=tp.seed + 2, chaser_ghost=True)
         scripts = [ScriptedEvader(mp, ep) for _ in range(tp.n_envs)]
         obs_list, act_list, _ = collect_demos(
-            demos_env, scripts, n_episodes=tp.bc_episodes, max_steps=ep.max_steps,
+            demos_env, scripts, n_episodes=n_trav, max_steps=ep.max_steps,
             require_escape=True, seed=0)
         demos_env.close()
+        # Phase B: pursued demos — a pursuer hovering just behind triggers the
+        # expert's flee rules (dash bursts, hops) so the NN starts knowing how
+        # to run WITH a chaser on its heels
+        if n_flee > 0 and obs_list:
+            flee_env = OriArenaVecEnv(
+                "evader", tp.n_envs,
+                StaticSampler(gen, adv.mean_params(), np.random.default_rng(tp.seed + 3)),
+                mp, ep, seed=tp.seed + 3, chaser_ghost=True)
+            obs2, act2, _ = collect_demos(
+                flee_env, scripts, n_episodes=n_flee, max_steps=ep.max_steps,
+                require_escape=True, seed=0,
+                fake_chaser_dx=getattr(tp, "bc_pursued_dx", -120.0))
+            flee_env.close()
+            obs_list += obs2
+            act_list += act2
         if obs_list:
             behavior_clone(evader.policy, obs_list, act_list,
                            epochs=tp.bc_epochs, lr=tp.evader_lr, device=device)

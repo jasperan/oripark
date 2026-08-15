@@ -13,7 +13,7 @@ from oripark.adversaries import StaticSampler, TerrainAdversary  # noqa: E402
 from oripark.arena import Arena, ArenaGenerator  # noqa: E402
 from oripark.config import EnvParams, MoveParams, TrainParams  # noqa: E402
 from oripark.env import OriArenaVecEnv  # noqa: E402
-from oripark.selfplay import frozen_policy, make_ppo  # noqa: E402
+from oripark.selfplay import frozen_policy, make_ppo, set_nets_from_run  # noqa: E402
 
 
 def load(path, role, tp, mp, ep, device):
@@ -62,6 +62,7 @@ def main():
     args = ap.parse_args()
 
     tp = TrainParams()
+    set_nets_from_run(tp, args.run)
     mp = MoveParams()
     ep = EnvParams()
     device = "cpu"

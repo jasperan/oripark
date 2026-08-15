@@ -17,7 +17,7 @@ import torch  # noqa: E402
 from oripark.arena import ArenaGenerator  # noqa: E402
 from oripark.config import EnvParams, MoveParams, TrainParams  # noqa: E402
 from oripark.env import OriArenaVecEnv  # noqa: E402
-from oripark.selfplay import frozen_policy, make_ppo  # noqa: E402
+from oripark.selfplay import frozen_policy, make_ppo, set_nets_from_run  # noqa: E402
 from oripark.render import make_gif  # noqa: E402
 
 
@@ -91,11 +91,15 @@ def main():
     ap.add_argument("--scan", type=int, default=120)
     ap.add_argument("--scale", type=float, default=0.5)
     ap.add_argument("--fps", type=int, default=30)
+    ap.add_argument("--params", type=float, default=None,
+                    help="uniform arena params (e.g. 0.7) instead of adv_mu")
     args = ap.parse_args()
 
     tp, mp, ep = TrainParams(), MoveParams(), EnvParams()
-    mu = np.load(os.path.join(args.run, "adv_mu.npy")) if os.path.exists(
-        os.path.join(args.run, "adv_mu.npy")) else np.full(6, 0.5)
+    set_nets_from_run(tp, args.run)
+    mu = (np.full(6, args.params) if args.params is not None
+          else np.load(os.path.join(args.run, "adv_mu.npy")) if os.path.exists(
+        os.path.join(args.run, "adv_mu.npy")) else np.full(6, 0.5))
 
     ch, gen = load(os.path.join(args.run, "chaser.zip"), "chaser", tp, mp, ep, mu)
     ev, _ = load(os.path.join(args.run, "evader.zip"), "evader", tp, mp, ep, mu)

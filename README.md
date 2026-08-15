@@ -8,13 +8,19 @@ level generator) that keeps the curriculum at the edge of the agents' skill.
 
 > **Untrained vs trained evader, same arena, same chaser** (untrained
 > wanders and times out; the trained evader escapes through the light
-> portal in ~6 seconds):
+> portal in ~4 seconds):
 >
-> ![improvement](docs/media/evader_improvement_v3.gif)
+> ![improvement](docs/media/evader_improvement.gif)
 >
-> Escape rate on **hard arenas** (60 matches, frozen chaser): **17% random
-> → 31% BC → 48% trained (2.8×)** — see [docs/RESULTS.md](docs/RESULTS.md)
-> and the [progress curve](docs/media/progress_curve_v3.png).
+> Trained-evader escape rate vs a **frozen adaptive chaser** on hard
+> arenas (150 matches): **random 37% → BC 35% → trained 47%** — see
+> [docs/RESULTS.md](docs/RESULTS.md), the
+> [progress curve](docs/media/progress_curve_v4.png), and the
+> [tournament with recorded videos](docs/tournament.md).
+>
+> The renderer is painterly Ori-style: warm god-light sky, parallax
+> foliage, grass-topped terrain, glowing orbs/portal, luminous spirit
+> agents, drifting fireflies and a soft vignette.
 
 ```
               ┌─────────────────────────────────────────────────┐
@@ -49,9 +55,10 @@ implemented faithfully (tuned in `oripark/config.py` → `MoveParams`):
 | Double jump (once per airtime) | `can_djump`, refreshed on landing; ground jump does **not** consume it |
 | Wall slide | capped fall speed 170 px/s against walls |
 | Wall jump (chainable) | 640 px/s horizontal kick + 900 px/s pop, 0.14 s re-stick grace |
+| **Wall climb (hold toward a wall)** | 170 px/s — the hero's signature move, **evader-only** (the pursuer can't) |
 | Dash (8 directions, momentum retention) | 1250 px/s burst for 0.12 s, post-dash bleed-off |
 | Bash (launch off targets, refreshes dash+djump) | static orbs, 8-way aim, 1150 px/s launch, 0.22 s cooldown |
-| Slight "float" while rising | gravity × 0.92 during ascent |
+| Slight "float" while rising, snappy descent | gravity × 0.92 ascending, × 1.12 falling, terminal velocity 1600 px/s |
 
 Arenas are tile-based (60×40, 32 px tiles) with a **path-first generator**:
 it lays a canonical platform chain from spawn to the light portal, then
@@ -100,6 +107,12 @@ python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 
 # head-to-head eval report vs the untrained baseline (markdown)
 ./.venv/bin/python eval.py --run results/run1 --matches 40 --baseline
+
+# tournament: rank every checkpoint vs the frozen chaser + record videos
+./.venv/bin/python tournament.py --run results/run1 --matches 60
+
+# best-checkpoint selection (self-play is non-stationary)
+./.venv/bin/python select.py --run results/run1
 ```
 
 Outputs in `results/<run>/`: `blocks.jsonl` (per-block Elo/win-rate/agility),

@@ -26,6 +26,8 @@ def main():
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--device", type=str, default=None, help="cpu or cuda (default: cuda if available)")
     ap.add_argument("--quick", action="store_true", help="tiny smoke-test config")
+    ap.add_argument("--evader-net", type=str, default=None, help="e.g. 384,384")
+    ap.add_argument("--evader-lr", type=float, default=None)
     args = ap.parse_args()
 
     tp = TrainParams()
@@ -49,6 +51,10 @@ def main():
         tp.seed = args.seed
     if args.out:
         tp.out_dir = args.out
+    if args.evader_net:
+        tp.evader_net = [int(x) for x in args.evader_net.split(",")]
+    if args.evader_lr:
+        tp.evader_lr = args.evader_lr
 
     mp = MoveParams()
     ep = EnvParams()

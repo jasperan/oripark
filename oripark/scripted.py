@@ -99,12 +99,19 @@ def bfs_path(grid: np.ndarray, start: tuple, goal: tuple):
 
 
 class ScriptedEvader:
-    """Single-env greedy controller with privileged grid access."""
+    """Single-env greedy controller with privileged grid access.
 
-    def __init__(self, p, ep, lookahead_px: float = 56.0):
+    Follows a BFS path to the portal with the full Ori kit, and adds
+    flee behavior when a chaser is close: target further-ahead waypoints,
+    dash burst away, hop/double-jump to break line of sight. Non-flee
+    behavior is bit-identical to the pure traversal controller.
+    """
+
+    def __init__(self, p, ep, lookahead_px: float = 56.0, flee_dist: float = 360.0):
         self.p = p
         self.ep = ep
         self.lookahead = lookahead_px
+        self.flee_dist = flee_dist
         self.path = None
         self.idx = 0
         self.dj_used = False
@@ -157,6 +164,17 @@ class ScriptedEvader:
         while (self.idx + 1 < len(self.path) and
                self.path[self.idx][0] * t <= x):
             self.idx += 1
+        flee = False
+        ch_d = 1e9
+        if chaser_x is not None and chaser_y is not None:
+            ch_d = np.hypot(chaser_x - x, chaser_y - y)
+            flee = ch_d < self.flee_dist
+        if flee:
+            # target further ahead so we OUTRUN the chaser rather than loiter
+            ahead = min(self.idx + 2, len(self.path) - 1)
+            while ahead > self.idx and self.path[ahead][0] * t <= x:
+                ahead -= 1
+            self.idx = ahead
         wpx, wpy = self.path[self.idx]
         tx = (wpx + 0.5) * t
         ty = (wpy + 0.5) * t
@@ -224,6 +242,13 @@ class ScriptedEvader:
         if (not on_ground) and vy >= -50 and can_djump and not self.dj_used \
                 and ddy < -70:
             want = "djump"
+        # --- panic escape: chaser on our heels — get airborne / change
+        # trajectory immediately (overrides the goal-driven jump rules)
+        if flee and ch_d < 210:
+            if on_ground:
+                want = "hop"
+            elif can_djump and not self.dj_used and self.jump_cd <= 0:
+                want = "djump"
         cd = {"hop": 5, "climb": 7, "unstuck": 4, "djump": 60}[want] \
             if want else 0
         if on_ground and self.jump_cd > 10:
@@ -239,11 +264,6 @@ class ScriptedEvader:
         # Conservative: 3-height corridor check, never into a wall, never
         # when the waypoint is near (dash would overshoot it).
         final_cell = self.idx >= len(self.path) - 1
-        flee = False
-        if chaser_x is not None and chaser_y is not None:
-            ch_d = np.hypot(chaser_x - x, chaser_y - y)
-            # chaser closing in from behind/below: run+burst away
-            flee = ch_d < 320 and chaser_x < x + 40
         if can_dash and dash_t <= 0 and not self.dash_pending and not wall_ahead:
             clear = True
             for k in range(1, 6):
@@ -257,7 +277,7 @@ class ScriptedEvader:
             # flee: burst toward the next waypoint when "pursued" (dash must
             # land at/near the target, never overshoot it)
             if clear and (ddx > 200 or (final_cell and -80 < ddx < 260) or
-                          (flee and 120 < ddx < 380)):
+                          (flee and 90 < ddx < 400)):
                 self.dash_pending = True
         if self.dash_pending:
             dash = 1
@@ -300,26 +320,36 @@ class ScriptedEvader:
 
 
 class ScriptedChaser:
-    """Simple pursuer: run right, jump obstacles, dash when far. Used as the
-    demo opponent so BC rollouts contain real chaser pressure."""
+    """Competent pursuer: follows the evader, hops/gaps, chains wall jumps up
+    tall obstacles, double-jumps onto ledges, and dashes to close distance.
+    Strong enough to genuinely pressure a fleeing expert in demo rollouts,
+    while still letting a good evader escape."""
 
-    def __init__(self, p, ep):
+    def __init__(self, p, ep, dash_dist: float = 300.0, use_djump: bool = True,
+                 climb_walls: bool = True):
         self.p = p
         self.ep = ep
+        self.dash_dist = dash_dist
+        self.use_djump = use_djump
+        self.climb_walls = climb_walls
         self.jump_cd = 0
         self.dash_pending = False
         self.stuck = 0
         self.last_cx = -1
+        self.dj_used = False
+        self.climb_mode = False
 
     def reset(self, arena):
         self.jump_cd = 0
         self.dash_pending = False
         self.stuck = 0
         self.last_cx = -1
+        self.dj_used = False
+        self.climb_mode = False
 
-    def act(self, arena, x, y, vx, vy, on_ground, wall_dir, can_dash, dash_t,
-            facing, evader_x) -> np.ndarray:
-        """[move, jump, dash]"""
+    def act(self, arena, x, y, vx, vy, on_ground, wall_dir, can_djump, can_dash,
+            dash_t, facing, evader_x, evader_y=None) -> np.ndarray:
+        """[move, jump, dash] — pursues the evader position."""
         p = self.p
         t = float(p.tile)
         W, H = p.arena_w, p.arena_h
@@ -327,6 +357,7 @@ class ScriptedChaser:
         cx = int(x / t)
         cy = int(y / t)
         ddx = evader_x - x
+        ddy = (evader_y - y) if evader_y is not None else 0.0
         dir_x = 1 if ddx > 8 else 0
         move = RIGHT if dir_x > 0 else IDLE
 
@@ -338,29 +369,49 @@ class ScriptedChaser:
         wall_ahead = dir_x != 0 and (
             tile(cx + dir_x, cy) in (SOLID, SPIKE) or
             tile(cx + dir_x, cy - 1) in (SOLID, SPIKE))
+        tall_wall = dir_x != 0 and (
+            tile(cx + dir_x, cy - 2) in (SOLID, SPIKE) and
+            tile(cx + dir_x, cy - 3) in (SOLID, SPIKE))
         gap_ahead = dir_x != 0 and \
             tile(cx + dir_x, cy + 1) == EMPTY and tile(cx + dir_x, cy + 2) == EMPTY
+        evader_above = ddy < -70 and abs(ddx) < 220
+        if not self.climb_walls and wall_ahead:
+            move = IDLE          # slide down instead of climbing (weaker demo chaser)
 
-        jump = 0
-        dash = 0
-        want = None
-        if on_ground:
-            if wall_ahead:
-                want = "hop"
-            elif self.stuck > 40:
-                want = "unstuck"
         if cx == self.last_cx:
             self.stuck += 1
         else:
             self.stuck = 0
             self.last_cx = cx
-        cd = {"hop": 5, "unstuck": 4}.get(want, 0)
+            if on_ground:
+                self.dj_used = False
+
+        jump = 0
+        dash = 0
+        want = None
+        if on_ground:
+            if tall_wall and wall_ahead:
+                self.climb_mode = True
+            elif not wall_ahead:
+                self.climb_mode = False
+            if wall_ahead or gap_ahead or evader_above or self.stuck > 40:
+                want = "hop"
+        if (not on_ground) and wall_dir != 0 and (self.climb_mode or ddy < -40):
+            want = "climb"
+        if (not on_ground) and can_djump and not self.dj_used \
+                and (ddy < -80 or (wall_ahead and not self.climb_mode)):
+            want = "djump"
+        cd = {"hop": 5, "climb": 7, "djump": 60}.get(want, 0)
         self.jump_cd = max(0, self.jump_cd - 1)
         if want is not None and self.jump_cd <= 0:
             jump = 1
             self.jump_cd = cd
-        # trailing pressure: dash only when the evader is FAR ahead
-        if can_dash and dash_t <= 0 and not self.dash_pending and ddx > 420:
+            if want == "djump":
+                self.dj_used = True
+        # closing dash: only when the evader is far ahead and the corridor is
+        # clear (keeps the expert a chance to escape while teaching pressure)
+        if can_dash and dash_t <= 0 and not self.dash_pending \
+                and ddx > self.dash_dist and not wall_ahead:
             clear = True
             for k in range(1, 6):
                 for h in (-1, 0, 1):

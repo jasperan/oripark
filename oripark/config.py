@@ -34,6 +34,9 @@ class MoveParams:
     walljump_h: float = 640.0                # horizontal kick away from wall
     walljump_v: float = -900.0               # vertical pop (~5 tiles)
     walljump_grace: float = 0.14             # re-stick prevention after wall jump
+    climb_speed: float = 170.0               # WotW wall climb: hold toward a wall
+    fall_gravity_mult: float = 1.12          # snappy WotW descent (float on rise)
+    max_fall: float = 1600.0                 # terminal velocity
 
     dash_speed: float = 1250.0               # burst speed (~39 px/frame at 60Hz)
     dash_time: float = 0.12
@@ -73,6 +76,7 @@ class EnvParams:
     r_caught: float = -2.5
     r_hazard: float = -2.0
     r_timeout: float = -3.0                  # failing to escape is a loss for the evader
+    r_hindsight: float = 1.5                 # credit best-ever portal progress on failure
     patch_w: int = 13
     patch_h: int = 9
     arena_difficulty_mix: float = 0.15       # chance a reset uses mean params
@@ -104,8 +108,17 @@ class TrainParams:
     warmup_blocks: int = 30                  # both sides first train vs random opponents
     pool_size: int = 8                       # opponent snapshots kept per side
     opp_latest_prob: float = 0.6             # P(pick most recent opponent)
+    # chaser-strength curriculum: the evader's opponent latest-prob anneals
+    # from opp_latest_start -> opp_latest_end over ladder_blocks, so early
+    # blocks face OLD (weak) chaser snapshots and late blocks the strongest
+    opp_latest_start: float = 0.10
+    opp_latest_end: float = 0.65
+    ladder_blocks: int = 120
     bc_episodes: int = 400                   # scripted demos for BC pretraining
     bc_epochs: int = 8                       # BC epochs (0 = skip behavior cloning)
+    bc_flee_frac: float = 0.35               # fraction of BC demos collected with a
+                                             # pursuer hovering behind (flee patterns)
+    bc_pursued_dx: float = -120.0            # fake chaser offset for flee demos
     bc_reg_every: int = 5                    # BC fine-tune the evader every N blocks
     bc_reg_epochs: int = 1                   # BC epochs per fine-tune
     bc_reg_lr_frac: float = 0.2              # fine-tune LR as fraction of evader_lr

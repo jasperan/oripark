@@ -9,6 +9,7 @@ results/
 *.gif
 demo_*.gif
 !docs/media/*.gif
+!docs/media/tournament/*.gif
 
 # Notebooks & caches
 .ipynb_checkpoints/

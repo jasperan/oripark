@@ -27,6 +27,7 @@ class TerrainAdversary:
         self.lo, self.hi = lo, hi
         self.mu = np.array([0.15, 0.15, 0.05, 0.2, 0.2, 0.05], dtype=np.float32)
         self.easy_mu = self.mu.copy()          # easy-start fallback for the reset rule
+        self.max_step = 0.12                   # per-update mu move cap
         self.sigma = np.full(self.dim, sigma0, dtype=np.float32)
         self.history = []
 
@@ -75,6 +76,9 @@ class TerrainAdversary:
             return rec
         elites = cands[idx]
         new_mu = elites.mean(axis=0)
+        # cap the per-update mu move so the curriculum cannot escalate faster
+        # than the learner can adapt (a fast CEM run-ahead destabilized run15)
+        new_mu = np.clip(new_mu, self.mu - self.max_step, self.mu + self.max_step)
         # sigma tracks the elite spread but decays back toward sigma0 so the
         # curriculum never random-walks into an exploded search distribution
         new_sigma = 0.8 * self.sigma + 0.2 * elites.std(axis=0)
