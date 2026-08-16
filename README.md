@@ -12,10 +12,12 @@ level generator) that keeps the curriculum at the edge of the agents' skill.
 >
 > ![improvement](docs/media/evader_improvement.gif) *(trained evader, run19 b270 — escapes; untrained flails)*
 >
-> Trained-evader escape rate vs a **frozen stochastic chaser** on
-> expert-winnable hard arenas (100 matches, seeded draws, reproducible
-> protocol in `hardarena.py`): **BC 27% → random 40% → trained 44%**
-> (run19, vs the run17 chaser; 38% vs its own) — see
+> Trained-evader escape rate vs **frozen stochastic chasers** on
+> expert-winnable hard arenas (100 matches, seeded draws, cross-chaser
+> matrix, reproducible protocol in `hardarena.py`): **run19 trained
+> escapes 44% vs run17's chaser (old arch: 31%), 62% vs the weakest
+> chaser** — and the true random floor, measured as a K=6 population, is
+> **4-8%, not the 17-45% single lucky inits suggested**. See
 > [docs/RESULTS.md](docs/RESULTS.md), the
 > [progress curve](docs/media/progress_curve_v4.png), and the
 > [tournament with recorded videos](docs/tournament.md).

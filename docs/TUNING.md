@@ -175,3 +175,24 @@ Everything is seeded (`TrainParams.seed`); deterministic eval uses
 - **Selection rule holds**: pick the shipped checkpoint by the definitive
   protocol (hardarena 07 stoch, seeded): run19 ships b270 (44% vs run17
   chaser); b210 is the within-terrain champion (68% combined set).
+
+## Round 6 — measure the floor, not a lucky draw (run20 + random-population)
+
+- **A single "random baseline" init is a lottery ticket**: run17/19/20's
+  saved inits escape 20/40/45% of hard arenas while fresh inits from
+  other seeds escape 0-2%. K=6 population floors: 4.3/6.9/7.7%. Always
+  report a random POPULATION (mean+min+max), never one init.
+- **Generalization needs a second seed**: run20 (same arch, seed 7)
+  confirmed the arch gain (+4..+20 across chasers) but landed weaker than
+  run19 (row mean 40% vs 48%) — one run is a datapoint, two is a claim.
+- **A weak chaser inflates everyone's escape**: run20's chaser ended at
+  Elo 1180 vs run19's 1216; random inits escape 45-57% on run20's column.
+  The cross-chaser matrix is the honest lens; own-chaser numbers are only
+  comparable within a run.
+- **Selection sensitivity is small**: run20 b170 (own-chaser best, 57%)
+  vs b299 (36% vs the strong chaser) — within noise; the protocol rule
+  (best on 07 stoch, own chaser) stays.
+- **Elo peak is the skill ceiling**: run19 evader peak 1352, run20 1370 —
+  both evaders trained to similar strength; the final-block sawtooth
+  position (chaser ahead or behind) decides how much of that skill shows
+  in own-chaser evals.

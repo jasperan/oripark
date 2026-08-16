@@ -11,6 +11,7 @@ noise removes the predictability the evader could otherwise lean on.
 Usage:
   python hardarena.py --run results/run17 --matches 150 --chaser det
   python hardarena.py --run results/run17 --matches 150 --chaser stoch
+  python hardarena.py --run results/run17 --random-seeds 4   # chaos-floor distribution
 """
 import argparse
 import glob
@@ -184,6 +185,11 @@ def main():
     ap.add_argument("--entrants", choices=["trio", "all"], default="trio",
                     help="trio = random/BC/trained; all = every checkpoint too")
     ap.add_argument("--max-checkpoints", type=int, default=8)
+    ap.add_argument("--random-seeds", type=int, default=1,
+                    help="random entrant = population of K deterministic inits "
+                         "(member 0 = the run's own pool_ev_0); mean+min/max "
+                         "reported — turns the chaotic-init floor into a "
+                         "measured distribution")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -221,6 +227,34 @@ def main():
     print(f"hard-arena skill test: {args.matches} matches, stochastic evader, {mode}\n")
     rows = []
     for name, path in ents:
+        if name == "random" and args.random_seeds > 1:
+            rates, notes = [], []
+            for i in range(args.random_seeds):
+                if i == 0:
+                    ev = load(path, "evader", tp, mp, ep)
+                else:
+                    env = OriArenaVecEnv(
+                        "evader", 1, FixedSampler(gen), mp, ep, seed=0)
+                    torch.manual_seed(1000 + i)
+                    ev = make_ppo(env, tp, 1000 + i, "cpu", "evader")
+                    env.close()
+                rate, esc, caught, tm, length = escape_rate(
+                    ev.policy, ch.policy, sampler, mp, ep, args.matches,
+                    chaser_stoch=(args.chaser == "stoch"), opp_ep=cep)
+                rates.append(rate)
+                notes.append((rate, esc, caught, tm, length))
+                print(f"  random init #{i:<2}      escape {rate:.1%} "
+                      f"({esc}/{args.matches}) caught {caught} tm {tm} "
+                      f"len {length:.0f}", flush=True)
+            rates = np.array(rates)
+            mean = rates.mean()
+            rows.append((f"random pop (K={args.random_seeds})",
+                         mean, int(rates.sum() * 0), 0, 0, 0))
+            rows.append((f"  min init", rates.min(), 0, 0, 0, 0))
+            rows.append((f"  max init", rates.max(), 0, 0, 0, 0))
+            print(f"  random population K={args.random_seeds}: mean {mean:.1%} "
+                  f"min {rates.min():.1%} max {rates.max():.1%}", flush=True)
+            continue
         ev = load(path, "evader", tp, mp, ep)
         rate, esc, caught, tm, length = escape_rate(
             ev.policy, ch.policy, sampler, mp, ep, args.matches,
@@ -237,7 +271,12 @@ def main():
           "| policy | escape rate | caught | timeout | avg len |",
           "|---|---:|---:|---:|---:|"]
     for name, rate, esc, caught, tm, length in sorted(rows, key=lambda r: -r[1]):
-        md.append(f"| {name} | {rate:.1%} ({esc}/{args.matches}) | {caught} | {tm} | {length:.0f} |")
+        if name.startswith("random pop"):
+            md.append(f"| {name} | {rate:.1%} (mean of K) | — | — | — |")
+        elif name.startswith("  min") or name.startswith("  max"):
+            continue
+        else:
+            md.append(f"| {name} | {rate:.1%} ({esc}/{args.matches}) | {caught} | {tm} | {length:.0f} |")
     md += ["", "Caveat: a deterministic frozen chaser is partly exploitable by chaos;",
            "the stochastic-chaser number is the honest one."]
     out = args.out or os.path.join(args.run, f"hardarena_{args.chaser}.md")

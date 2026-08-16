@@ -165,15 +165,20 @@ def main():
                     help="arena seed used for the recorded entrant videos")
     ap.add_argument("--chaser", choices=["det", "stoch"], default="det",
                     help="frozen chaser mode: argmax (det) or action sampling (stoch)")
+    ap.add_argument("--chaser-run", default=None,
+                    help="run dir whose frozen chaser.zip to use (default: same as --run)")
     ap.add_argument("--out-md", default="docs/tournament.md")
     ap.add_argument("--out-media", default="docs/media/tournament")
     args = ap.parse_args()
 
     tp, mp, ep = load_run_params(args.run)
     set_nets_from_run(tp, args.run)
+    crun = args.chaser_run or args.run
+    ctp, cmp_, cep = load_run_params(crun)
+    set_nets_from_run(ctp, crun)
     sampler, mu = make_arena_set(args.run, mp, ep, n=args.arenas, seed0=4242,
                                   combined=True)
-    ch = load_policy(os.path.join(args.run, "chaser.zip"), "chaser", tp, mp, ep)
+    ch = load_policy(os.path.join(crun, "chaser.zip"), "chaser", ctp, cmp_, cep)
     cstoch = args.chaser == "stoch"
 
     ents = entrants_for(args.run, tp, mp, ep, max_checkpoints=args.max_checkpoints)

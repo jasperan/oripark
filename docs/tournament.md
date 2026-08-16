@@ -87,3 +87,12 @@ shipped b270 (`final/best`) sits at 37% — protocol-selected for hard-arena
 generalization (44%), not its own-terrain ranking. Full table:
 [tournament_run19.md](tournament_run19.md), videos in
 `docs/media/tournament_run19/`.
+
+---
+
+## run20 — generalization confirmation (same arch, seed 7)
+
+Second arch run, different seed — its own chaser ended weak, so the
+table is measured against run19's stronger chaser; see the caveat box in
+[tournament_run20.md](tournament_run20.md). Videos in
+`docs/media/tournament_run20/`.

@@ -202,3 +202,29 @@ portal.
   per-run `params.json` persistence + seeded per-entrant draws +
   `--chaser-run` cross-chaser control — the metric is now fully
   reproducible and confound-controlled.
+
+## E15 — second arch run (run20, seed 7): the gain generalizes (POSITIVE)
+- Same arch/rewards as run19 (forward-biased 19×10 patch, escape-dominant
+  rewards, 384² net, 300 blocks), new seed. Evader trained even higher
+  (peak Elo 1370 vs run19's 1352) but its chaser never re-adapted (final
+  Elo 1180 vs run19 chaser's 1216) — a weak chaser inflates own-chaser
+  escape numbers, which is why run20's column in the 3×3 matrix runs hot
+  for everyone.
+- **Result**: run20 trained beats run17 trained on all three frozen
+  chasers (+4/+7/+20), confirming the arch gain generalizes. Between the
+  two arch runs, run19's trained remains the strongest evader (row mean
+  48% vs run20's 40% — seed variance matters).
+
+## E16 — the random floor is ~4-8%, not 17-45% (chaotic-init baseline, measured)
+- Each run's saved `pool_ev_0` (labeled "random" in every earlier table)
+  is ONE init draw, and it turns out the runs got lucky: run17's init
+  escapes 20%, run19's 40%, run20's 45% of hard arenas. Fresh inits from
+  other seeds escape 0-2%.
+- **Fix**: `--random-seeds K` evaluates K deterministic inits (member 0 =
+  the run's own init) with identical draws and reports mean/min/max.
+  K=6 floors: run17 4.3%, run19 6.9%, run20 7.7%. The trained edge over
+  the TRUE floor is +27 to +49 pts (was reported as +6-11 vs a lucky
+  init). Chaos is real but rare — most random inits flail and die.
+- **Retraction**: the "chaos is strong — random escapes 17-27%" framing
+  in earlier docs (E13, Round-4 tuning) measured a single lucky draw per
+  run, not the floor. Single-init baselines are retired from the metric.
