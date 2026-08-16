@@ -76,8 +76,12 @@ map.
 1. **Evader (PPO)** — full Ori kit. Rewards: portal progress + rightward
    milestones (dense, un-gameable), a one-time bonus for passing the chaser,
    survival time, separation gain, agility usage (dash/wall-jump/
-   double-jump/bash), +3 for escaping through the portal, penalties for
-   being caught or hitting spikes, -3 for failing to escape before timeout.
+   double-jump/bash), **+10 for escaping through the portal** — dominant
+   over the dense shaping so the objective is unambiguous — penalties for
+   being caught (−8) or hitting spikes (−8), **−10 for failing to escape
+   before timeout**. (The old +3/−3 scheme was smaller than the max
+   milestone haul, teaching "run right" over "reach the portal" — fixed
+   in run19, [E14](docs/EXPERIMENTS.md).)
 2. **Chaser (PPO)** — same physics minus bash. Rewards mirror the evader's:
    closing distance, proximity, catching, penalty when the evader escapes.
 3. **Terrain adversary (cross-entropy method)** — a small policy over the 6
@@ -115,6 +119,12 @@ python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 # tournament: rank every checkpoint vs the frozen chaser + record videos
 ./.venv/bin/python tournament.py --run results/run1 --matches 60
 
+# THE definitive metric: escape rate on oracle-filtered hard arenas
+# (stochastic frozen chaser, seeded draws; --random-seeds K measures the
+# true random floor as a population instead of one lucky init)
+./.venv/bin/python hardarena.py --run results/run1 --matches 100 --chaser stoch --set 07
+./.venv/bin/python hardarena.py --run results/run1 --random-seeds 6
+
 # best-checkpoint selection (self-play is non-stationary)
 ./.venv/bin/python select.py --run results/run1
 ```
@@ -122,8 +132,9 @@ python3 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
 Outputs in `results/<run>/`: `blocks.jsonl` (per-block Elo/win-rate/agility),
 `episodes.jsonl` (every episode), `curves.png` (learning curves),
 `evader.zip`/`chaser.zip` (final policies), `pool_ev_*.pt`/`pool_ch_*.pt`
-(league snapshots — `evader_init.pt` is the untrained baseline for
-before/after demos), `adv_mu.npy` (final terrain-adversary parameters).
+(league snapshots — `pool_ev_0.pt` is the true random-init baseline;
+`evader_init.pt` is the BC-pretrained policy), `adv_mu.npy` (final
+terrain-adversary parameters).
 
 ## Structure
 

@@ -180,6 +180,9 @@ portal.
   vs 17%; mixed: 16% vs 15% vs 10%).
 - **Fix**: `hardarena.py --chaser stoch` is the definitive metric;
   deterministic-chaser numbers are reported only for reference.
+- **Superseded (E16)**: the 10-18% "random" figures here used ONE init
+  draw per run. The K=6 random-population floor shows the true random
+  floor is 4-8% — see [E16](#e16--the-random-floor-is-4-8-not-17-45-chaotic-init-baseline-measured).
 
 ## E14 — architectural lever: forward-biased patch + escape-dominant rewards (run19, POSITIVE)
 - **Diagnosis**: the old centered 13×9 patch showed only 4 tiles up — a

@@ -143,6 +143,8 @@ Everything is seeded (`TrainParams.seed`); deterministic eval uses
   17-37% of hard arenas by unpredictability alone. Sample the chaser's
   actions (frozen weights) and the exploit closes: random drops to 10-18%
   and the trained ordering (trained > BC > random) emerges cleanly.
+  (Superseded by Round 6: those random figures were single lucky init
+  draws — the K=6 population floor is 4-8%.)
 - **Oracle-filter the test set**: of 600 hard-arena candidates, the
   scripted expert can win only ~half. Testing on the rest measures luck of
   reachability, not skill.
@@ -151,9 +153,8 @@ Everything is seeded (`TrainParams.seed`); deterministic eval uses
   reward are the binding constraints, not the terrain mix.
 - **Selection rule**: pick the shipped checkpoint by the DEFINITIVE metric
   (hardarena, stoch chaser), not the final block and not the run's own
-  mu arena set. run17 ships b299 (26% hard); b130 remains the
-  within-terrain champion (48% combined set) — different terrain, different
-  winners, both reported.
+  mu arena set. run17 ships b299; b130 remains its within-terrain
+  champion — different terrain, different winners, both reported.
 - **Sawtooth is structural**: the chaser re-adapts every run (b61 evader
   wr 0.85 → b399 wr 0.06). Do not read final-block numbers.
 
