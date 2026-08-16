@@ -28,6 +28,10 @@ def main():
     ap.add_argument("--quick", action="store_true", help="tiny smoke-test config")
     ap.add_argument("--evader-net", type=str, default=None, help="e.g. 384,384")
     ap.add_argument("--evader-lr", type=float, default=None)
+    ap.add_argument("--gap-force-prob", type=float, default=None,
+                    help="fraction of training arenas with gap_scale forced high")
+    ap.add_argument("--gap-force", type=float, default=None,
+                    help="forced gap_scale value for sprinkled arenas")
     args = ap.parse_args()
 
     tp = TrainParams()
@@ -55,6 +59,10 @@ def main():
         tp.evader_net = [int(x) for x in args.evader_net.split(",")]
     if args.evader_lr:
         tp.evader_lr = args.evader_lr
+    if args.gap_force_prob is not None:
+        tp.gap_force_prob = args.gap_force_prob
+    if args.gap_force is not None:
+        tp.gap_force = args.gap_force
 
     mp = MoveParams()
     ep = EnvParams()

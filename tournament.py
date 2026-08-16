@@ -99,10 +99,13 @@ def make_arena_set(run_dir, mp, ep, n=24, seed0=4242, combined=False):
     return FixedArenas(arenas), mu
 
 
-def escape_rate(ev_pol, ch_pol, sampler, mp, ep, matches=40, seed=7):
-    """Stochastic evader vs deterministic chaser on the fixed arena set."""
+def escape_rate(ev_pol, ch_pol, sampler, mp, ep, matches=40, seed=7,
+                chaser_stoch=False):
+    """Stochastic evader vs frozen chaser (argmax or action sampling) on the
+    fixed arena set."""
     env = OriArenaVecEnv("evader", matches, sampler, mp, ep,
-                         opponent=frozen_policy(ch_pol, deterministic=True), seed=seed)
+                         opponent=frozen_policy(ch_pol, deterministic=not chaser_stoch),
+                         seed=seed)
     obs = env.reset()
     esc = caught = tm = 0
     lens = []
@@ -159,6 +162,8 @@ def main():
     ap.add_argument("--max-checkpoints", type=int, default=8)
     ap.add_argument("--video-seed", type=int, default=4242,
                     help="arena seed used for the recorded entrant videos")
+    ap.add_argument("--chaser", choices=["det", "stoch"], default="det",
+                    help="frozen chaser mode: argmax (det) or action sampling (stoch)")
     ap.add_argument("--out-md", default="docs/tournament.md")
     ap.add_argument("--out-media", default="docs/media/tournament")
     args = ap.parse_args()
@@ -168,15 +173,18 @@ def main():
     sampler, mu = make_arena_set(args.run, mp, ep, n=args.arenas, seed0=4242,
                                   combined=True)
     ch = load_policy(os.path.join(args.run, "chaser.zip"), "chaser", tp, mp, ep)
+    cstoch = args.chaser == "stoch"
 
     ents = entrants_for(args.run, tp, mp, ep, max_checkpoints=args.max_checkpoints)
     print(f"tournament on {args.arenas} fixed arenas (mu {np.round(mu,2)}) "
-          f"vs frozen chaser | {len(ents)} entrants", flush=True)
+          f"vs {'stochastic' if cstoch else 'deterministic'} frozen chaser "
+          f"| {len(ents)} entrants", flush=True)
 
     rows = []
     for name, path in ents:
         ev = load_policy(path, "evader", tp, mp, ep)
-        r = escape_rate(ev.policy, ch.policy, sampler, mp, ep, matches=args.matches)
+        r = escape_rate(ev.policy, ch.policy, sampler, mp, ep,
+                        matches=args.matches, chaser_stoch=cstoch)
         rate = r["esc"] / max(r["n"], 1)
         rows.append((name, r, rate))
         print(f"  {name:22s} esc={r['esc']:3d}/{r['n']} ({rate:5.1%}) "

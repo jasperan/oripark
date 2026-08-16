@@ -152,3 +152,31 @@ portal.
 - **Note**: the deterministic chaser is partly exploitable by chaos
   (random escapes 37% of hard arenas), so escape rates are only
   meaningful relative to the random/BC baselines.
+
+## E12 — gap-sprinkling + capacity did NOT transfer (run18, negative result)
+- **Hypothesis**: the CEM never raises gap_scale (wide gaps hurt the
+  chaser too, so its win-rate signal saturates on spike loss), leaving
+  the evader untrained on 4-5-tile gap gauntlets — the measured
+  cross-distribution weakness. Force wide-gap training by sprinkling
+  gap-forced arenas into self-play (33% at gap 0.6), add capacity
+  (512² net), extend horizon (400 blocks).
+- **Result**: best checkpoint ties run17 on the 0.7-only hard protocol
+  (26% both) and edges it on mixed (21% vs 16%, within noise). The
+  trained evader never beats the random baseline on the 0.7-only draw
+  (26% vs 27% — vs run17's +9 over random at 17%).
+- **Lesson**: distribution coverage is not the binding constraint; the
+  local 13×9 observation patch + sparse escape reward limit
+  gap-commitment learning, and sprinkling dilutes the spike-gauntlet
+  skill that gives the within-terrain edge. The reproducible protocol
+  (`hardarena.py`) also exposed that the earlier "hard-arena 47%" claim
+  was measured on an easier, unreconstructable protocol — superseded.
+
+## E13 — the stochastic-chaser protocol (honest metric)
+- **Finding**: with a deterministic frozen chaser, a random evader
+  escapes 17-37% of hard arenas by chaos alone. Sampling the chaser's
+  actions (still frozen weights) closes the exploitation hole: random
+  drops to 10-18% and the trained policy's ordering becomes
+  trained > BC > random on the same arenas (run17 0.7-only: 26% vs 12%
+  vs 17%; mixed: 16% vs 15% vs 10%).
+- **Fix**: `hardarena.py --chaser stoch` is the definitive metric;
+  deterministic-chaser numbers are reported only for reference.

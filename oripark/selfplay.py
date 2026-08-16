@@ -59,11 +59,30 @@ def sample_opponent(pool, rng, latest_prob: float):
     return pool[int(rng.integers(0, len(pool) - 1))]
 
 
+class GapSprinkler:
+    """Wrap an arena sampler; with prob p, regenerate the draw with gap_scale
+    forced to a hard value so the evader learns wide-gap traversal that the
+    CEM never selects (raising gap hurts the chaser too, so the curriculum
+    saturates on spike loss and leaves gap at the easy end)."""
+
+    def __init__(self, base, p: float, gap: float, gen: ArenaGenerator,
+                 rng: np.random.Generator):
+        self.base, self.p, self.gap = base, p, gap
+        self.gen, self.rng = gen, rng
+
+    def sample(self, n: int) -> list[Arena]:
+        out = []
+        for a in self.base.sample(n):
+            if self.rng.random() < self.p:
+                row = np.asarray(a.params, dtype=np.float32).copy()
+                row[0] = self.gap
+                out.append(self.gen.generate(row, seed=int(self.rng.integers(2 ** 31))))
+            else:
+                out.append(a)
+        return out
+
+
 def sample_ladder_opponent(pool, rng, block: int, tp: TrainParams):
-    """Chaser-strength curriculum: anneal latest-prob from a low start so the
-    evader first faces OLD (weak) chaser snapshots and progressively the
-    strongest. When not picking the latest, older snapshots are weighted more
-    heavily early on — a natural difficulty ladder from self-play history."""
     if len(pool) == 1:
         return pool[-1]
     frac = min(1.0, block / max(1, tp.ladder_blocks))
@@ -230,6 +249,11 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
     gen = ArenaGenerator(mp, rng)
     adv = TerrainAdversary(gen, rng, pop=tp.adv_pop, elites=tp.adv_elites,
                            sigma0=tp.adv_sigma0, target_wr=tp.adv_target_wr)
+    tr_sampler = adv
+    if getattr(tp, "gap_force_prob", 0.0) > 0:
+        tr_sampler = GapSprinkler(adv, tp.gap_force_prob, tp.gap_force, gen, rng)
+        print(f"gap-sprinkling: {tp.gap_force_prob:.0%} of training arenas at "
+              f"gap_scale {tp.gap_force}", flush=True)
     metrics = Metrics(out_dir)
 
     boot_ev = OriArenaVecEnv("evader", tp.n_envs, StaticSampler(gen, adv.mean_params(), rng),
@@ -303,7 +327,7 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
         else:
             opp = sample_opponent(ch_pool, rng, tp.opp_latest_prob)
             opp_name = "pool"
-        env = OriArenaVecEnv("evader", tp.n_envs, adv, mp, ep,
+        env = OriArenaVecEnv("evader", tp.n_envs, tr_sampler, mp, ep,
                              opponent=None if opp is None else frozen_policy(opp),
                              seed=tp.seed + block)
         evader.env = env
@@ -339,7 +363,7 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
             opp = None
         else:
             opp = sample_opponent(ev_pool, rng, tp.opp_latest_prob)
-        env = OriArenaVecEnv("chaser", tp.n_envs, adv, mp, ep,
+        env = OriArenaVecEnv("chaser", tp.n_envs, tr_sampler, mp, ep,
                              opponent=None if opp is None else frozen_policy(opp),
                              seed=tp.seed + block + 1000)
         chaser.env = env

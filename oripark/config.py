@@ -124,6 +124,13 @@ class TrainParams:
     bc_reg_lr_frac: float = 0.2              # fine-tune LR as fraction of evader_lr
     eval_matches: int = 16                   # per block, latest-vs-latest
     eval_ep_len: int = 360                   # 6 s cap for eval matches
+    # gap-sprinkling: the CEM never raises gap_scale (wide gaps hurt the
+    # chaser too, so its win-rate signal saturates on spike loss instead),
+    # leaving the evader untrained on 4-5-tile gap gauntlets. With prob
+    # gap_force_prob, a training arena is regenerated with gap forced to
+    # gap_force so both agents learn wide-gap traversal.
+    gap_force_prob: float = 0.0
+    gap_force: float = 0.6
     adv_update_every: int = 4                # terrain adversary CEM cadence
     adv_pop: int = 6
     adv_elites: int = 3
