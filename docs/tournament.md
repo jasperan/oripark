@@ -76,3 +76,14 @@ run17 (26%) — see [RESULTS.md](RESULTS.md) E12 for the negative result.
 
 Full table: [tournament_run18.md](tournament_run18.md), videos in
 `docs/media/tournament_run18/`.
+
+---
+
+## run19 — the architectural lever (forward-biased patch + escape rewards)
+
+The same tournament on run19's checkpoint line: **b210 leads the NNs at
+68%** (run17's champion was 48%), the scripted expert holds 87%, and the
+shipped b270 (`final/best`) sits at 37% — protocol-selected for hard-arena
+generalization (44%), not its own-terrain ranking. Full table:
+[tournament_run19.md](tournament_run19.md), videos in
+`docs/media/tournament_run19/`.

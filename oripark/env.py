@@ -67,7 +67,14 @@ def _scalars(phys: OriPhysics, si, oi, p: MoveParams, ep: EnvParams,
 
 
 def _patch(phys: OriPhysics, si, oi, ep: EnvParams) -> np.ndarray:
-    """Local patch_w x patch_h tile patch centered on self; opponent marked 5."""
+    """Forward-biased tile patch around self; opponent marked 5.
+
+    Window: patch_back tiles behind, patch_front ahead (both inclusive of
+    the center column), patch_up above, patch_down below. The old centered
+    13x9 patch showed only 4 tiles up — a full jump apex is ~4.5 tiles, so
+    the landing zone was invisible at apex. The bias also matches the
+    rightward escape game (more lookahead ahead than behind).
+    """
     p = phys.p
     t = float(p.tile)
     N = len(np.arange(phys.n)[si])
@@ -77,10 +84,11 @@ def _patch(phys: OriPhysics, si, oi, ep: EnvParams) -> np.ndarray:
     ox = np.clip((phys.x[oi] / t).astype(np.int64), 0, p.arena_w - 1)
     oy = np.clip((phys.y[oi] / t).astype(np.int64), 0, p.arena_h - 1)
 
-    half_w = ep.patch_w // 2
-    half_h = ep.patch_h // 2
-    xs = cx[:, None] + np.arange(-half_w, half_w + 1)[None, :]
-    ys = cy[:, None] + np.arange(-half_h, half_h + 1)[None, :]
+    back, front = ep.patch_back, ep.patch_front
+    up, down = ep.patch_up, ep.patch_down
+    pw, ph = back + 1 + front, up + 1 + down
+    xs = cx[:, None] + np.arange(-back, front + 1)[None, :]
+    ys = cy[:, None] + np.arange(-up, down + 1)[None, :]
     xs_c = np.clip(xs, 0, p.arena_w - 1)
     ys_c = np.clip(ys, 0, p.arena_h - 1)
     flat = ys_c[..., None] * p.arena_w + xs_c[:, None, :]
@@ -93,11 +101,11 @@ def _patch(phys: OriPhysics, si, oi, ep: EnvParams) -> np.ndarray:
     remap[ORB] = 3.0
     remap[PORTAL] = 4.0
     out = remap[vals]
-    dr = oy - (cy - half_h)
-    dc = ox - (cx - half_w)
-    ok = (dr >= 0) & (dr < ep.patch_h) & (dc >= 0) & (dc < ep.patch_w)
-    r = np.clip(dr, 0, ep.patch_h - 1)
-    c = np.clip(dc, 0, ep.patch_w - 1)
+    dr = oy - (cy - up)
+    dc = ox - (cx - back)
+    ok = (dr >= 0) & (dr < ph) & (dc >= 0) & (dc < pw)
+    r = np.clip(dr, 0, ph - 1)
+    c = np.clip(dc, 0, pw - 1)
     out[np.arange(N), r, c] = np.where(ok, 5.0, out[np.arange(N), r, c])
     return out.reshape(N, -1)
 
@@ -109,19 +117,22 @@ class OriArenaVecEnv(VecEnv):
 
     def __init__(self, role: str, n_envs: int, sampler, move: MoveParams,
                  ep: EnvParams, opponent=None, seed: int = 0,
-                 chaser_ghost: bool = False, opp_acts_fn=None):
+                 chaser_ghost: bool = False, opp_acts_fn=None,
+                 opp_ep: EnvParams | None = None):
         assert role in ("evader", "chaser")
         self.role = role
         self.n_envs = n_envs
         self.sampler = sampler
         self.p = move
         self.ep = ep
+        self.opp_ep = opp_ep or ep        # opponent's obs patch (cross-run evals)
         self.opponent = opponent
         self.chaser_ghost = chaser_ghost      # park the chaser out of the way
         self.opp_acts_fn = opp_acts_fn        # privileged-state opponent policy
         self.rng = np.random.default_rng(seed)
 
-        self.obs_dim = 24 + ep.patch_w * ep.patch_h + (4 if role == "chaser" else 0)
+        self.obs_dim = 24 + (ep.patch_back + 1 + ep.patch_front) * \
+            (ep.patch_up + 1 + ep.patch_down) + (4 if role == "chaser" else 0)
         obs_space = spaces.Box(low=-5.0, high=5.0, shape=(self.obs_dim,), dtype=np.float32)
         act_space = EV_ACT if role == "evader" else CH_ACT
         super().__init__(n_envs, obs_space, act_space)
@@ -238,15 +249,16 @@ class OriArenaVecEnv(VecEnv):
     def _obs_both(self) -> dict:
         N = self.n_envs
         ev, ch = slice(0, N), slice(N, 2 * N)
+        oep = self.opp_ep              # opponent patch geometry (cross-run evals)
         ev_scal = _scalars(self.phys, ev, ch, self.p, self.ep, self.t)
-        ch_scal = _scalars(self.phys, ch, ev, self.p, self.ep, self.t, extra={
+        ch_scal = _scalars(self.phys, ch, ev, self.p, oep, self.t, extra={
             "ev_on_ground": self.phys.on_ground[ev].astype(np.float32),
             "ev_wall_dir": self.phys.wall_dir[ev].astype(np.float32),
             "ev_can_djump": self.phys.can_djump[ev].astype(np.float32),
             "ev_can_dash": self.phys.can_dash[ev].astype(np.float32),
         })
         ev_pat = _patch(self.phys, ev, ch, self.ep)
-        ch_pat = _patch(self.phys, ch, ev, self.ep)
+        ch_pat = _patch(self.phys, ch, ev, oep)
         return {
             "evader": np.concatenate([ev_scal, ev_pat], axis=1).astype(np.float32),
             "chaser": np.concatenate([ch_scal, ch_pat], axis=1).astype(np.float32),

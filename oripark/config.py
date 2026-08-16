@@ -67,18 +67,26 @@ class EnvParams:
     # reward shaping: escape-oriented (portal >> survive-to-timeout)
     r_time: float = 0.002                    # tiny survival tick (timeout ≈ 0 total)
     r_dist_gain: float = 0.010               # per 50 px of separation change (secondary)
-    r_portal_progress: float = 0.05          # per 100 px of portal-distance reduction (primary)
-    r_milestone: float = 0.4                 # first-time crossing of each 128 px rightward zone
+    r_portal_progress: float = 0.10         # per 100 px of portal-distance reduction (primary)
+    r_milestone: float = 0.35               # first-time crossing of each 128 px rightward zone
     r_pass: float = 1.0                      # one-time bonus for getting past the chaser
     r_proximity: float = 0.004
     r_agility: float = 0.06
-    r_portal: float = 3.0                    # clean escape — the dominant objective
-    r_caught: float = -2.5
-    r_hazard: float = -2.0
-    r_timeout: float = -3.0                  # failing to escape is a loss for the evader
-    r_hindsight: float = 1.5                 # credit best-ever portal progress on failure
-    patch_w: int = 13
-    patch_h: int = 9
+    r_portal: float = 10.0                   # clean escape — the dominant objective
+    r_caught: float = -8.0
+    r_hazard: float = -8.0
+    r_timeout: float = -10.0                 # failing to escape is a loss for the evader
+    r_hindsight: float = 2.0                 # credit best-ever portal progress on failure
+    # forward-biased observation patch: the game is a rightward escape, and
+    # a full jump apex is ~4.5 tiles — the old centered 13x9 patch showed
+    # only 4 tiles up, hiding the landing zone at apex. New window: 5 tiles
+    # behind, 13 ahead, 7 up, 2 down (19x10 = 190 tiles).
+    patch_back: int = 5
+    patch_front: int = 13
+    patch_up: int = 7
+    patch_down: int = 2
+    patch_w: int = 19          # back + 1 + front (kept in sync for readability)
+    patch_h: int = 10          # up + 1 + down
     arena_difficulty_mix: float = 0.15       # chance a reset uses mean params
 
 
@@ -139,3 +147,56 @@ class TrainParams:
     adv_target_wr: float = 0.50
     seed: int = 0
     out_dir: str = "results/run1"
+
+
+# ---------------------------------------------------------------------------
+# per-run parameter persistence
+# ---------------------------------------------------------------------------
+# Every run saves its exact (MoveParams, EnvParams, TrainParams) as
+# params.json, and every eval tool loads them back. This is what makes a
+# metric "one command away": changing defaults never silently changes how
+# old runs are measured.
+
+
+def params_to_dict(tp: TrainParams, mp: MoveParams, ep: EnvParams) -> dict:
+    import dataclasses
+
+    return {
+        "train": dataclasses.asdict(tp),
+        "move": dataclasses.asdict(mp),
+        "env": dataclasses.asdict(ep),
+    }
+
+
+def dict_to_params(d: dict):
+    def _fill(cls, data):
+        ok = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        return cls(**ok)
+
+    return (_fill(TrainParams, d["train"]),
+            _fill(MoveParams, d["move"]),
+            _fill(EnvParams, d["env"]))
+
+
+def save_run_params(run_dir: str, tp: TrainParams, mp: MoveParams, ep: EnvParams):
+    import json
+    import os
+
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "params.json"), "w") as f:
+        json.dump(params_to_dict(tp, mp, ep), f, indent=1, sort_keys=True)
+
+
+def load_run_params(run_dir: str):
+    """Load (tp, mp, ep) for a run dir; falls back to current defaults."""
+    import json
+    import os
+
+    path = os.path.join(run_dir, "params.json")
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                return dict_to_params(json.load(f))
+        except Exception:
+            pass
+    return TrainParams(), MoveParams(), EnvParams()

@@ -20,7 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
-from oripark.config import EnvParams, MoveParams, TrainParams  # noqa: E402
+from oripark.config import (EnvParams, MoveParams, TrainParams,
+                             load_run_params)  # noqa: E402
 from oripark.arena import ArenaGenerator  # noqa: E402
 from oripark.env import OriArenaVecEnv  # noqa: E402
 from oripark.selfplay import frozen_policy, make_ppo, set_nets_from_run  # noqa: E402
@@ -168,7 +169,7 @@ def main():
     ap.add_argument("--out-media", default="docs/media/tournament")
     args = ap.parse_args()
 
-    tp, mp, ep = TrainParams(), MoveParams(), EnvParams()
+    tp, mp, ep = load_run_params(args.run)
     set_nets_from_run(tp, args.run)
     sampler, mu = make_arena_set(args.run, mp, ep, n=args.arenas, seed0=4242,
                                   combined=True)

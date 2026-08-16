@@ -15,7 +15,8 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 from oripark.arena import ArenaGenerator  # noqa: E402
-from oripark.config import EnvParams, MoveParams, TrainParams  # noqa: E402
+from oripark.config import (EnvParams, MoveParams, TrainParams,
+                             load_run_params)  # noqa: E402
 from oripark.env import OriArenaVecEnv  # noqa: E402
 from oripark.selfplay import frozen_policy, make_ppo, set_nets_from_run  # noqa: E402
 from oripark.render import make_gif  # noqa: E402
@@ -95,7 +96,7 @@ def main():
                     help="uniform arena params (e.g. 0.7) instead of adv_mu")
     args = ap.parse_args()
 
-    tp, mp, ep = TrainParams(), MoveParams(), EnvParams()
+    tp, mp, ep = load_run_params(args.run)
     set_nets_from_run(tp, args.run)
     mu = (np.full(6, args.params) if args.params is not None
           else np.load(os.path.join(args.run, "adv_mu.npy")) if os.path.exists(

@@ -5,66 +5,87 @@
 `python hardarena.py --run results/runN --matches 100 --chaser stoch --set 07`
 
 - **Arenas**: uniform-hard terrain params 0.7 (or a 2:1 mix of 0.7/0.85),
-  fixed seeds, **filtered by the scripted-expert oracle** — an arena only
-  counts if a competent player can actually win it, so the test measures
-  skill, not luck of reachability.
-- **Chaser**: frozen run chaser, **stochastic** (action sampling). A
-  deterministic frozen chaser is partly exploitable by chaos — a random
-  policy escapes 17-37% of hard arenas just by being unpredictable. The
-  stochastic chaser closes that hole; this is the honest number.
-- **Evader**: stochastic, the honest PPO protocol.
+  fixed seeds (5000+k), **filtered by the scripted-expert oracle** — an
+  arena only counts if a competent player can actually win it.
+- **Chaser**: frozen, **stochastic** (action sampling). A deterministic
+  frozen chaser is partly exploitable by chaos; sampling closes the hole.
+- **Evader**: stochastic, identical seeded draws for every entrant (policy
+  differences only), so cross-run comparisons are valid.
+- **Cross-chaser control**: `--chaser-run results/runA` evaluates a run's
+  evaders against another run's frozen chaser — the 2×2 matrix below
+  removes the "weaker chaser inflates escape" confound.
 
-### run17 (`results/run17`, 300 blocks, 384² net)
+### run19 — the architectural lever (`results/run19`, 300 blocks, 384² net)
 
-| policy | escape (0.7-only, stoch chaser) | escape (mixed 0.7/0.85) |
+run17's recipe plus: (1) a **forward-biased 19×10 observation patch**
+(5 behind / 13 ahead / 7 up / 2 down — the old centered 13×9 showed only
+4 tiles up, hiding the landing zone at the 4.5-tile jump apex), and
+(2) **escape-dominant rewards** (portal 10.0 vs timeout −10.0 — the old
+3.0 escape bonus was smaller than the max milestone haul, so the policy
+was implicitly taught "run right" over "reach the portal").
+
+**Hard-arena escape, 100 matches, stochastic chaser, seeded draws:**
+
+| evader \ frozen chaser | run17 chaser | run19 chaser |
 |---|---:|---:|
-| random | 17% | 10% |
-| BC-pretrained | 12% | 15% |
-| **best checkpoint b299 → `evader.zip`** | **26%** | 16% |
+| random (run17 init) | 20% | 30% |
+| BC-pretrained (run17) | 21% | 16% |
+| **run17 trained (b299)** | **31%** | **25%** |
+| random (run19 init) | 38% | 40% |
+| BC-pretrained (run19) | 21% | 27% |
+| **run19 trained (b270 → `evader.zip`)** | **44%** | **38%** |
 
-The trained evader escapes hard gauntlets **+9 pts over chaotic luck** and
-+14 over its own teacher. Best checkpoint was selected by this protocol
-(b299); b130 is the within-terrain champion (see tournament).
+**The trained evader improved +13 pts against both frozen chasers** (31→44
+vs run17's chaser, 25→38 vs run19's). The run19 random init is unusually
+chaotic (38-40% escape — seed-3 init luck), so the within-run margin over
+chaos is small, but trained beats BC decisively (+11 to +23 pts) and the
+cross-chaser gain over run17's trained policy is the controlled claim.
 
-### run18 (`results/run18`, 400 blocks, 512² net + gap-sprinkling)
+### run17 (`results/run17`, 300 blocks, 384² net) — previous reference
 
-| policy | escape (0.7-only) | escape (mixed) |
-|---|---:|---:|
-| random | 27% | 18% |
-| BC-pretrained | 13% | 14% |
-| best checkpoint b340 → `evader.zip` | 26% | 21% |
+| policy | escape (0.7-only, stoch chaser) |
+|---|---:|
+| random | 20% |
+| BC-pretrained | 21% |
+| best checkpoint b299 | 31% |
 
-**Verdict: no cross-distribution gain.** run18's levers (gap-sprinkling at
-gap 0.6 for 1/3 of training arenas, 512² capacity, 400 blocks) tie run17 on
-the 0.7-only set (26% both) and edge it on mixed (21% vs 16%, within
-noise). The gap-sprinkling hypothesis — that forcing wide-gap training
-would teach cross-distribution traversal — is a documented negative
-([E12](EXPERIMENTS.md)). run17 remains the reference run.
+### run18 (`results/run18`, 400 blocks, 512² net + gap-sprinkling) — negative result
+
+| policy | escape (0.7-only) |
+|---|---:|
+| random | 27% |
+| BC-pretrained | 13% |
+| best checkpoint b340 | 26% |
+
+Gap-sprinkling + capacity did not transfer ([E12](EXPERIMENTS.md)); its
+own terrain drifted so far the scripted expert collapsed to 2% on its
+tournament set. run17 superseded it; run19 supersedes run17.
 
 ## What the numbers mean (honest framing)
 
 - **Within its own terrain** the trained evader is clearly better than
-  untrained: tournament combined set (mu spike gauntlets + hard uniforms)
-  ranks the trained checkpoints above random 37% — b130 48%, b299 37% —
-  and the run's own-distribution eval shows trained 28% vs untrained 15%
-  (run17). The self-play sawtooth means the FINAL block is usually in a
-  post-peak slump; best-checkpoint selection is mandatory.
-- **Cross-distribution** (uniform 4-tile gap gauntlets the curriculum never
-  produced — the CEM keeps gap easy because wide gaps hurt the chaser too):
-  the edge over random is real but modest (+9 pts run17). Earlier
-  "hard-arena 47%" numbers in this repo were measured on an
-  unreconstructable, easier protocol and are **superseded** by this
-  reproducible one.
-- **Chaos is strong**: a random policy escapes 17-27% of hard gauntlets.
-  Every trained-policy claim is made relative to that baseline.
+  untrained: run19's combined-set tournament ranks b210 first among NNs at
+  68% (run17's champion was 48%); random-init is at 53%, BC at 33%. The
+  self-play sawtooth (evader peaks mid-run, chaser re-adapts) makes
+  best-checkpoint selection by protocol mandatory — never read the final
+  block.
+- **Cross-distribution** (uniform 4-tile gap gauntlets): run19's trained
+  policy escapes 38-44% vs run17's 25-31% against either chaser — the
+  patch/reward architecture fixed part of the gap-commitment ceiling.
+- **Chaos is strong**: a random init escapes 20-40% of hard gauntlets
+  depending on init seed and chaser. Every trained-policy claim is made
+  relative to the same-draw baseline.
 
 ## Training dynamics
 
-- run17: BC NLL 0.17 (384²); evader all-time peak Elo 1310 / eval-wr 0.93
-  at block 20 before the chaser adapted; CEM converged to spike_prob 0.92.
-- run18: evader dominated early (eval-wr 0.85 at b61) then the chaser
-  adapted (sawtooth); final-block evader at Elo 1076 vs chaser 1319 — the
-  classic post-peak slump, exactly why selection is by protocol, not block.
+- run19: BC NLL 0.15; evader peak Elo 1352 / eval-wr 1.00 at block 61
+  before the chaser adapted; CEM converged to spike-heavy mu; final-block
+  evader Elo 1183 vs chaser 1216 (post-peak slump — selection is by
+  protocol, not block).
+- run17: evader peak Elo 1310 at block 20; CEM converged to spike_prob
+  0.92.
+- run18: gap-sprinkling drifted the terrain; BC'd policy topped its own
+  combined set at 60%.
 
 ## Physics v2 — Ori WotW fidelity (movement)
 
@@ -77,28 +98,34 @@ would teach cross-distribution traversal — is a documented negative
 
 ## Visual proof
 
-- `docs/media/evader_improvement*.gif` — trained (b299) escapes in 123-202
-  steps on hard arenas where the untrained policy is caught or times out.
-- `docs/media/tournament/*.gif` — one recorded video per entrant on a
-  common arena: random flails, BC hits a hazard, the champion escapes.
+- `docs/media/evader_improvement*.gif` — run19 trained (b270) escapes in
+  197-454 steps on hard arenas where the untrained policy is caught or
+  times out.
+- `docs/media/tournament_run19/*.gif` — one recorded video per entrant on
+  a common arena.
 - `docs/media/progress_curve_v4.png` / `training_curves_v4.png` — run17's
   fixed-arena curve and Elo curves.
 
 ## Reproduce
 
 ```bash
-python train.py --blocks 300 --out results/run17 --evader-net 384,384 \
-    --evader-lr 4e-4                       # ~60-80 min (cpu) or faster (cuda)
-python hardarena.py --run results/run17 --matches 100 --chaser stoch --set 07
-python tournament.py --run results/run17   # ranked table + videos
-python progress.py --run results/run17     # within-run curve
-python gifdemo.py --run results/run17 --out docs/media/hero.gif --params 0.7
+python train.py --blocks 300 --out results/run19 --evader-net 384,384 \
+    --evader-lr 4e-4 --seed 3 --device cuda     # ~50 min on CUDA
+python hardarena.py --run results/run19 --matches 100 --chaser stoch --set 07
+python hardarena.py --run results/run19 --chaser-run results/run17 \
+    --matches 100 --chaser stoch --set 07        # cross-chaser control
+python tournament.py --run results/run19         # ranked table + videos
+python progress.py --run results/run19           # within-run curve
+python gifdemo.py --run results/run19 --out docs/media/hero.gif --params 0.7
 ```
 
 ## Caveats
 
-- ±7-8% CI at 100 matches; treat single-digit margins as directional.
+- ±8-10% CI at 100 matches; treat single-digit margins as directional.
 - The oracle filter (scripted expert) is itself a skill assumption — it
   marks ~half of hard arenas winnable.
 - Self-play non-stationarity: policies and numbers are run-specific; the
-  ranking rules (protocol + selection) are the transferable contribution.
+  ranking rules (protocol + seeded draws + selection) are the
+  transferable contribution. Each run's exact config is frozen in its
+  `params.json` (local) and archived at `docs/configs/run*_params.json`
+  (tracked) — every metric stays one command away.

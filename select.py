@@ -18,7 +18,8 @@ import numpy as np  # noqa: E402
 from stable_baselines3 import PPO  # noqa: E402
 
 from oripark.arena import ArenaGenerator  # noqa: E402
-from oripark.config import EnvParams, MoveParams, TrainParams  # noqa: E402
+from oripark.config import (EnvParams, MoveParams, TrainParams,
+                             load_run_params)  # noqa: E402
 from oripark.env import OriArenaVecEnv  # noqa: E402
 from oripark.selfplay import frozen_policy, make_ppo, set_nets_from_run  # noqa: E402
 
@@ -85,7 +86,7 @@ def main():
                     help="matches for the chosen winner (tighter estimate)")
     args = ap.parse_args()
 
-    tp, mp, ep = TrainParams(), MoveParams(), EnvParams()
+    tp, mp, ep = load_run_params(args.run)
     set_nets_from_run(tp, args.run)
     rng = np.random.default_rng(1)
     gen = ArenaGenerator(mp, rng, chaser_frac=ep.chaser_spawn_frac)

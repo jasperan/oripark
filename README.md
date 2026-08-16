@@ -10,11 +10,12 @@ level generator) that keeps the curriculum at the edge of the agents' skill.
 > wanders and times out; the trained evader escapes through the light
 > portal in ~4 seconds):
 >
-> ![improvement](docs/media/evader_improvement.gif) *(trained evader, b299 — escapes; untrained flails)*
+> ![improvement](docs/media/evader_improvement.gif) *(trained evader, run19 b270 — escapes; untrained flails)*
 >
 > Trained-evader escape rate vs a **frozen stochastic chaser** on
-> expert-winnable hard arenas (100 matches, reproducible protocol in
-> `hardarena.py`): **random 17% → BC 12% → trained 26%** (run17) — see
+> expert-winnable hard arenas (100 matches, seeded draws, reproducible
+> protocol in `hardarena.py`): **BC 27% → random 40% → trained 44%**
+> (run19, vs the run17 chaser; 38% vs its own) — see
 > [docs/RESULTS.md](docs/RESULTS.md), the
 > [progress curve](docs/media/progress_curve_v4.png), and the
 > [tournament with recorded videos](docs/tournament.md).

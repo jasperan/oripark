@@ -13,7 +13,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import torch  # noqa: E402
 
-from oripark.config import EnvParams, MoveParams, TrainParams  # noqa: E402
+from oripark.config import (EnvParams, MoveParams, TrainParams,
+                             save_run_params)  # noqa: E402
 from oripark.selfplay import run  # noqa: E402
 
 
@@ -66,6 +67,7 @@ def main():
 
     mp = MoveParams()
     ep = EnvParams()
+    save_run_params(tp.out_dir, tp, mp, ep)   # persist the exact run config
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     print(f"== ori-park self-play | device={device} | blocks={tp.blocks} "
           f"steps/block={tp.block_steps} envs={tp.n_envs} out={tp.out_dir} ==", flush=True)

@@ -180,3 +180,25 @@ portal.
   vs 17%; mixed: 16% vs 15% vs 10%).
 - **Fix**: `hardarena.py --chaser stoch` is the definitive metric;
   deterministic-chaser numbers are reported only for reference.
+
+## E14 — architectural lever: forward-biased patch + escape-dominant rewards (run19, POSITIVE)
+- **Diagnosis**: the old centered 13×9 patch showed only 4 tiles up — a
+  full jump apex is ~4.5 tiles, so the landing zone was invisible at
+  apex — and only 6 tiles ahead at dash speed. And the escape bonus
+  (+3.0) was SMALLER than the max milestone haul (15 zones × 0.4 = 6.0),
+  teaching "run right" over "reach the portal".
+- **Fix**: forward-biased 19×10 patch (5 back / 13 ahead / 7 up / 2
+  down; obs 141 → 214) + escape-dominant rewards (portal +10.0,
+  timeout −10.0, caught −8.0, portal-progress ×2).
+- **Result (seeded draws, 100 matches, stochastic chaser)**:
+  run19 trained 44% vs run17 trained 31% against run17's chaser, and
+  38% vs 25% against run19's chaser — **+13 pts against both frozen
+  chasers**. run19's own random init is unusually chaotic (38-40%), so
+  the within-run margin over chaos is small, but trained beats BC by
+  +11-23 and dominates the combined-set tournament (b210 68% vs run17's
+  champion 48%).
+- **Lesson**: observation geometry and reward dominance were the binding
+  constraints, not distribution coverage (E12) or capacity. Also landed:
+  per-run `params.json` persistence + seeded per-entrant draws +
+  `--chaser-run` cross-chaser control — the metric is now fully
+  reproducible and confound-controlled.

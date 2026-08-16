@@ -156,3 +156,22 @@ Everything is seeded (`TrainParams.seed`); deterministic eval uses
   winners, both reported.
 - **Sawtooth is structural**: the chaser re-adapts every run (b61 evader
   wr 0.85 → b399 wr 0.06). Do not read final-block numbers.
+
+## Round 5 — architecture over training (run19, the win)
+
+- **See the whole jump**: the centered 13×9 patch capped gap skill — 4
+  tiles up < 4.5-tile apex. A forward-biased window (13 ahead / 7 up)
+  fixed it. Observation geometry beats more training.
+- **Reward dominance**: the escape bonus must exceed the dense-shaping
+  haul. Portal 3.0 vs 6.0 max milestones was teaching "run right";
+  portal 10.0 vs 5.25 milestones makes the objective unambiguous.
+- **Seed the draws, control the chaser**: unseeded stochastic evals drift
+  ±10% between invocations — every entrant now gets identical draws
+  (torch/np seed inside the eval), and `--chaser-run` builds the 2×2
+  evader×chaser matrix so a weak chaser can't inflate escape rates.
+- **Freeze the config per run**: `params.json` in each run dir + a shared
+  `load_run_params` in every tool. Changing defaults never silently
+  re-measures old runs (backfilled run17/18 with their exact old config).
+- **Selection rule holds**: pick the shipped checkpoint by the definitive
+  protocol (hardarena 07 stoch, seeded): run19 ships b270 (44% vs run17
+  chaser); b210 is the within-terrain champion (68% combined set).

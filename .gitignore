@@ -11,6 +11,7 @@ demo_*.gif
 !docs/media/*.gif
 !docs/media/tournament/*.gif
 !docs/media/tournament_run18/*.gif
+!docs/media/tournament_run19/*.gif
 
 # Notebooks & caches
 .ipynb_checkpoints/

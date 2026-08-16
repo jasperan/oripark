@@ -24,7 +24,8 @@ import numpy as np  # noqa: E402
 from stable_baselines3 import PPO  # noqa: E402
 
 from oripark.arena import ArenaGenerator  # noqa: E402
-from oripark.config import EnvParams, MoveParams, TrainParams  # noqa: E402
+from oripark.config import (EnvParams, MoveParams, TrainParams,
+                             load_run_params)  # noqa: E402
 from oripark.env import OriArenaVecEnv  # noqa: E402
 from oripark.selfplay import frozen_policy, make_ppo, set_nets_from_run  # noqa: E402
 
@@ -141,10 +142,15 @@ def expert_winnable(arenas, mp, ep, max_steps=None, batch=16):
 
 
 def escape_rate(ev_pol, ch_pol, sampler, mp, ep, n_matches, chaser_stoch: bool,
-                seed: int = 7):
+                seed: int = 7, opp_ep=None):
     n_envs = min(n_matches, 32)
+    # identical stochastic draws for every entrant -> policy differences only
+    import torch as _torch
+    _torch.manual_seed(seed)
+    np.random.seed(seed)
     ch = frozen_policy(ch_pol, deterministic=not chaser_stoch)
-    env = OriArenaVecEnv("evader", n_envs, sampler, mp, ep, opponent=ch, seed=seed)
+    env = OriArenaVecEnv("evader", n_envs, sampler, mp, ep, opponent=ch,
+                         seed=seed, opp_ep=opp_ep)
     obs = env.reset()
     esc = caught = n_done = 0
     lens = []
@@ -168,6 +174,8 @@ def escape_rate(ev_pol, ch_pol, sampler, mp, ep, n_matches, chaser_stoch: bool,
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="results/run17")
+    ap.add_argument("--chaser-run", default=None,
+                    help="run dir whose frozen chaser.zip to use (default: same as --run)")
     ap.add_argument("--matches", type=int, default=150)
     ap.add_argument("--chaser", choices=["det", "stoch"], default="det",
                     help="frozen chaser mode: argmax (det) or action sampling (stoch)")
@@ -179,13 +187,16 @@ def main():
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
-    tp, mp, ep = TrainParams(), MoveParams(), EnvParams()
+    tp, mp, ep = load_run_params(args.run)
     set_nets_from_run(tp, args.run)
+    crun = args.chaser_run or args.run
+    ctp, cmp_, cep = load_run_params(crun)
+    set_nets_from_run(ctp, crun)
     rng = np.random.default_rng(1)
     gen = ArenaGenerator(mp, rng, chaser_frac=ep.chaser_spawn_frac)
     sampler = HardSampler(gen, args.matches, mp, ep, mix=args.set)
 
-    ch = load(os.path.join(args.run, "chaser.zip"), "chaser", tp, mp, ep)
+    ch = load(os.path.join(crun, "chaser.zip"), "chaser", ctp, cmp_, cep)
 
     ents = []
     p0 = os.path.join(args.run, "pool_ev_0.pt")
@@ -213,7 +224,7 @@ def main():
         ev = load(path, "evader", tp, mp, ep)
         rate, esc, caught, tm, length = escape_rate(
             ev.policy, ch.policy, sampler, mp, ep, args.matches,
-            chaser_stoch=(args.chaser == "stoch"))
+            chaser_stoch=(args.chaser == "stoch"), opp_ep=cep)
         rows.append((name, rate, esc, caught, tm, length))
         print(f"  {name:<18} escape {rate:.1%} ({esc}/{args.matches}) "
               f"caught {caught} tm {tm} len {length:.0f}", flush=True)
