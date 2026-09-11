@@ -222,12 +222,17 @@ def main():
                          "(member 0 = the run's own pool_ev_0); mean+min/max "
                          "reported — turns the chaotic-init floor into a "
                          "measured distribution")
+    ap.add_argument("--legacy-obs-chaser", action="store_true",
+                    help="same, for the frozen chaser checkpoint (pre-fix "
+                         "chasers were also trained on the old scaling)")
     ap.add_argument("--legacy-obs", action="store_true",
-                    help="feed the evader the pre-fix observation scaling "
+                    help="feed the EVADER the pre-fix observation scaling "
                          "(32x direction features + the old 9 px no-orb "
                          "sentinel). REQUIRED to evaluate checkpoints trained "
                          "before the obs-units fix, otherwise they see inputs "
-                         "they never trained on")
+                         "they never trained on. Applies to the evader only: "
+                         "pair it with --legacy-obs-chaser to put both sides "
+                         "in their own training convention")
     ap.add_argument("--oracle", choices=["calm", "panic"], default="calm",
                     help="arena filter: 'calm' = competent traversal (default, "
                          "documented intent); 'panic' = legacy buggy filter that "
@@ -244,6 +249,8 @@ def main():
     set_nets_from_run(tp, args.run)
     crun = args.chaser_run or args.run
     ctp, cmp_, cep = load_run_params(crun)
+    if args.legacy_obs_chaser:
+        cep.obs_legacy_units = True
     set_nets_from_run(ctp, crun)
     rng = np.random.default_rng(1)
     gen = ArenaGenerator(mp, rng, chaser_frac=ep.chaser_spawn_frac)
@@ -318,7 +325,8 @@ def main():
           f"{args.matches} matches, stochastic evader, mixed 0.7/0.85 arenas, "
           f"frozen chaser (`{args.chaser}`), oracle `{args.oracle}` "
           f"({len(sampler.arenas)} arenas), obs "
-          f"`{'legacy-32x' if args.legacy_obs else 'fraction'}`.",
+          f"`{'legacy-32x' if args.legacy_obs else 'fraction'}` / chaser obs "
+          f"`{'legacy-32x' if cep.obs_legacy_units else 'fraction'}`.",
           "",
           "| policy | escape rate | survival | escaped | caught | timeout | "
           "ev_hazard | ch_hazard | mean zone | avg len |",

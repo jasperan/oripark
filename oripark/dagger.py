@@ -142,8 +142,16 @@ def main():
     ap.add_argument("--epochs", type=int, default=4, help="BC epochs per round")
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--workers", type=int, default=None)
+    ap.add_argument("--chaser", default=None,
+                    help="path to a specific frozen chaser checkpoint "
+                         "(default <run>/chaser.zip, which only exists once "
+                         "the run has finished; snapshots are chaser_bNNN.zip)")
     ap.add_argument("--ghost", action="store_true",
                     help="train against a parked chaser instead of the run's")
+    ap.add_argument("--legacy-obs-chaser", action="store_true",
+                    help="run the frozen chaser in the pre-fix obs convention, "
+                         "i.e. the convention it was trained in (without this "
+                         "a pre-fix chaser is a crippled opponent)")
     ap.add_argument("--device", default="cpu")
     args = ap.parse_args()
 
@@ -160,18 +168,26 @@ def main():
           else np.full(6, 0.5))
 
     from stable_baselines3 import PPO
+    cep = ep
+    if args.legacy_obs_chaser:
+        from dataclasses import replace
+        cep = replace(ep, obs_legacy_units=True)
     chaser = None
     if not args.ghost:
-        ck = os.path.join(args.run, "chaser.zip")
+        ck = args.chaser or os.path.join(args.run, "chaser.zip")
         if os.path.exists(ck):
             probe = OriArenaVecEnv("chaser", 1, StaticArenaSampler(gen, mu, rng),
-                                   mp, ep, seed=0)
+                                   mp, cep, seed=0)
             chaser = PPO.load(ck, env=probe, device="cpu")
             probe.close()
+            print(f"[dagger] opponent = {ck}", flush=True)
+        else:
+            print(f"[dagger] no chaser at {ck} -> ghost rollouts", flush=True)
     opp = frozen_policy(chaser.policy, True) if chaser is not None else None
 
     env = OriArenaVecEnv("evader", n_envs, StaticArenaSampler(gen, mu, rng), mp, ep,
-                         opponent=opp, seed=tp.seed + 7, chaser_ghost=chaser is None)
+                         opponent=opp, seed=tp.seed + 7, chaser_ghost=chaser is None,
+                         opp_ep=cep)
     policy = make_ppo(env, tp, tp.seed, dev, "evader").policy
     policy.to(dev)
     scripts = [ScriptedEvader(mp, ep) for _ in range(n_envs)]
