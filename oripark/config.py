@@ -88,6 +88,16 @@ class EnvParams:
     patch_w: int = 19          # back + 1 + front (kept in sync for readability)
     patch_h: int = 10          # up + 1 + down
     arena_difficulty_mix: float = 0.15       # chance a reset uses mean params
+    # Observation-unit convention. The direction/distance features used to be
+    # an inconsistent mix: positions were fractions of the arena (0..1) while
+    # the orb/opponent/portal deltas were pixels divided by the arena size in
+    # TILES, i.e. 32x larger (tile = 32 px), and the "no orb" sentinel was
+    # 9 px inside bash_range. Anything trained before that was fixed reads
+    # those channels at 32x the magnitude it learned on, so evaluating an old
+    # checkpoint requires this flag to be set: it restores the training-time
+    # scaling (and the old sentinel) instead of silently feeding the policy
+    # out-of-distribution inputs.
+    obs_legacy_units: bool = False
 
 
 @dataclass

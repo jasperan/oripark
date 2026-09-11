@@ -9,15 +9,28 @@ from __future__ import annotations
 
 import os
 
+from dataclasses import replace
+
 import numpy as np
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-from oripark.arena import Arena  # noqa: E402
+from oripark.arena import Arena, ArenaGenerator  # noqa: E402
 from oripark.env import OriArenaVecEnv
 from oripark.metrics import Elo, elo_pair_update
 from oripark.physics import ORB, PORTAL, SOLID
 from oripark.selfplay import cem_score
+
+
+class FixedSamplerLocal:
+    def __init__(self, arena):
+        self.arena = arena
+
+    def sample(self, n):
+        return [self.arena for _ in range(n)]
+
+    def mean_params(self):
+        return self.arena.params
 
 
 def make_arena(mp, orbs=(), portal=(57, 36)):  # noqa: D401
@@ -259,6 +272,39 @@ def test_artifact_tables_share_one_denominator():
         m = re.match(r"([\d.]+)%\s*\((\d+)/(\d+)\)", cells[1])
         assert m, line
         pct, esc, n = float(m.group(1)), int(m.group(2)), int(m.group(3))
-        nums = [int(cells[i]) for i in (2, 3, 4, 5, 6)]
+        nums = [int(cells[i]) for i in range(3, 8)]
         assert sum(nums) == n, f"outcome columns must sum to n: {line}"
+        assert "%" in cells[2], f"survival column missing: {line}"
         assert abs(pct - 100 * esc / n) < 0.6, f"percent must be esc/n: {line}"
+
+
+def test_legacy_obs_flag_restores_the_training_time_scaling(mp, ep):
+    """Pre-fix checkpoints were trained with direction features 32x larger
+    (pixels / arena size in TILES) and a 9 px no-orb sentinel. Evaluating them
+    in the fixed env feeds out-of-distribution inputs, so the legacy flag must
+    reproduce the old magnitudes exactly."""
+    import numpy as np
+    gen = ArenaGenerator(mp, np.random.default_rng(3),
+                         chaser_frac=ep.chaser_spawn_frac)
+    arena = gen.generate(np.full(6, 0.7), seed=5011)
+    fixed = OriArenaVecEnv("evader", 1, FixedSamplerLocal(arena), mp, ep, seed=0)
+    ep2 = replace(ep, obs_legacy_units=True)
+    legacy = OriArenaVecEnv("evader", 1, FixedSamplerLocal(arena), mp, ep2, seed=0)
+    o1, o2 = fixed.reset()[0], legacy.reset()[0]
+    fd, ld = o1[:24], o2[:24]
+    # channels: 12/13 = opponent delta, 16/17 = orb delta, 19/20 = portal
+    # delta (pixels / TILES in the legacy convention, pixels / pixels now).
+    # 0/1 = position and 21 = portal distance were already correct fractions
+    # and must be unchanged.
+    for i in (0, 1, 21):
+        assert abs(ld[i] - fd[i]) < 1e-6, (i, ld[i], fd[i])
+    for i in (12, 13, 16, 17, 19, 20):
+        if abs(fd[i]) > 0.05:     # channel carries signal in this arena
+            ratio = abs(ld[i]) / abs(fd[i])
+            assert ratio > 20, (f"channel {i}: legacy/fixed ratio {ratio:.1f} "
+                                f"should be ~{mp.tile}")
+    assert np.all(np.abs(fd) <= 5.0), "fixed obs must sit inside Box(-5,5)"
+    assert np.max(np.abs(ld)) > 5.0, (
+        "legacy obs must reproduce the pre-fix out-of-Box magnitudes "
+        f"(max |legacy| = {np.max(np.abs(ld)):.2f})")
+    fixed.close(); legacy.close()

@@ -222,6 +222,12 @@ def main():
                          "(member 0 = the run's own pool_ev_0); mean+min/max "
                          "reported — turns the chaotic-init floor into a "
                          "measured distribution")
+    ap.add_argument("--legacy-obs", action="store_true",
+                    help="feed the evader the pre-fix observation scaling "
+                         "(32x direction features + the old 9 px no-orb "
+                         "sentinel). REQUIRED to evaluate checkpoints trained "
+                         "before the obs-units fix, otherwise they see inputs "
+                         "they never trained on")
     ap.add_argument("--oracle", choices=["calm", "panic"], default="calm",
                     help="arena filter: 'calm' = competent traversal (default, "
                          "documented intent); 'panic' = legacy buggy filter that "
@@ -233,6 +239,8 @@ def main():
     args = ap.parse_args()
 
     tp, mp, ep = load_run_params(args.run)
+    if args.legacy_obs:
+        ep.obs_legacy_units = True
     set_nets_from_run(tp, args.run)
     crun = args.chaser_run or args.run
     ctp, cmp_, cep = load_run_params(crun)
@@ -309,7 +317,8 @@ def main():
           "",
           f"{args.matches} matches, stochastic evader, mixed 0.7/0.85 arenas, "
           f"frozen chaser (`{args.chaser}`), oracle `{args.oracle}` "
-          f"({len(sampler.arenas)} arenas).",
+          f"({len(sampler.arenas)} arenas), obs "
+          f"`{'legacy-32x' if args.legacy_obs else 'fraction'}`.",
           "",
           "| policy | escape rate | survival | escaped | caught | timeout | "
           "ev_hazard | ch_hazard | mean zone | avg len |",

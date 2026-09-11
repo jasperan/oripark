@@ -29,13 +29,17 @@ def _scalars(phys: OriPhysics, si, oi, p: MoveParams, ep: EnvParams,
     """Normalized scalar features for a role view. Returns (N, K)."""
     t_ = float(p.tile)  # noqa: F841  (documents the pixel unit of W/H below)
     W, H = p.arena_w * t_, p.arena_h * t_          # arena size in PIXELS
+    legacy = ep.obs_legacy_units
+    Wd, Hd = (p.arena_w, p.arena_h) if legacy else (W, H)   # legacy: tiles
     xs, ys = phys.x[si], phys.y[si]
     oxs, oys = phys.x[oi], phys.y[oi]
     ovx, ovy = phys.vx[oi], phys.vy[oi]
 
     # sentinel = "no orb in range"; it must read as FAR, not as an orb 9 px
     # away (the old sentinel was 9 px, which is inside bash_range)
-    orb_d = np.full_like(xs, p.bash_range * 9.0)
+    # legacy mode restores that old 9-px sentinel so pre-fix checkpoints see
+    # exactly the value they were trained on
+    orb_d = np.full_like(xs, 9.0 if legacy else p.bash_range * 9.0)
     orb_dx = np.zeros_like(xs); orb_dy = np.zeros_like(xs)
     orbs_s = phys.orbs[si]                    # (N, 8, 2)
     for k in range(8):
@@ -43,8 +47,8 @@ def _scalars(phys: OriPhysics, si, oi, p: MoveParams, ep: EnvParams,
         ok = ~np.isnan(ox)
         d = np.hypot(ox - xs, oy - ys)
         closer = ok & (d < orb_d)
-        orb_dx = np.where(closer, (ox - xs) / W, orb_dx)
-        orb_dy = np.where(closer, (oy - ys) / H, orb_dy)
+        orb_dx = np.where(closer, (ox - xs) / Wd, orb_dx)
+        orb_dy = np.where(closer, (oy - ys) / Hd, orb_dy)
         orb_d = np.where(closer, d, orb_d)
 
     ptx = phys.portals[si, 0]; pty = phys.portals[si, 1]
@@ -58,10 +62,11 @@ def _scalars(phys: OriPhysics, si, oi, p: MoveParams, ep: EnvParams,
         phys.coyote[si] / p.coyote_time, phys.buffer[si] / p.jump_buffer,
         phys.can_djump[si].astype(np.float32), phys.can_dash[si].astype(np.float32),
         phys.dash_t[si] / p.dash_time, phys.bash_cd[si] / p.bash_cooldown,
-        (oxs - xs) / W, (oys - ys) / H,
+        (oxs - xs) / Wd, (oys - ys) / Hd,
         ovx / p.max_run, ovy / 1200.0,
-        orb_dx, orb_dy, np.clip(orb_d / p.bash_range, 0, 5),  # 5 = far/no orb, inside Box(-5,5)
-        (ptx - xs) / W, (pty - ys) / H, portal_d / W,
+        orb_dx, orb_dy,
+        np.clip(orb_d / p.bash_range, 0, 9 if legacy else 5),
+        (ptx - xs) / Wd, (pty - ys) / Hd, portal_d / W,
         t / ep.max_steps, phys.facing[si],
     ]
     if extra:
