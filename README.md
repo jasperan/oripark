@@ -13,39 +13,36 @@ level generator) that keeps the curriculum at the edge of the agents' skill.
 >
 > ### Measurement status — read [docs/VERIFICATION.md](docs/VERIFICATION.md)
 >
-> A full verification pass over this repo re-ran every claim and found a
-> movement bug: `wall_dir` was never cleared and wall
-> climb/jump/slide never tested for actual wall contact, so agents could climb
-> at 170 px/s **in mid-air** anywhere on the map. The earlier headline results
-> are retracted, and so is the first correction published here: that one fed
-> the frozen chasers observations in a convention they were never trained on
-> (see below), which crippled them and inflated everybody's escape rate.
+> A full verification pass re-ran every claim here and found three defects that
+> invalidated the published results: agents could **climb in mid-air**
+> (`wall_dir` was never cleared and wall climb/jump/slide never tested for
+> actual contact), the arena oracle tested a **panicking** expert (it was
+> handed its own position as the chaser), and every "random"/"untrained"
+> baseline loaded `pool_ev_0.pt`, which is an early **trained** pool snapshot
+> (the league trims its pool with `pop(0)`), not an init. All three are fixed
+> and regression-tested.
 >
-> Corrected protocol — fixed physics, 310 expert-winnable hard arenas, seeded
-> draws, stochastic frozen chaser, and **each policy fed the observation
-> convention it was trained in**:
+> Verified table — fixed physics, 310 expert-winnable hard arenas, stochastic
+> frozen chaser, 100 seeded matches, each policy fed the observation convention
+> it was trained in, opponent = `run21_fixed`'s chaser (the only pursuer here
+> trained against an evader that cannot fly):
 >
-> | entrant | escape | survived | caught | chaser fell | mean zone of 12 |
-> |---|---:|---:|---:|---:|---:|
-> | scripted expert (privileged state, no NN) | **28–33%** | 54–71% | 46/27 | 26/38 | 8.0–8.7 |
-> | run17 trained (old arch) | 21% | 56% | 33 | 35 | 7.6 |
-> | run19 trained (new arch) | 14% | 47% | 37 | 33 | 7.2 |
-> | run20 trained (new arch) | 15% | 71% | 16 | 56 | 7.9 |
-> | random init | 18–25% | 52–72% | 19–36 | 34–49 | 6.0–7.5 |
-> | BC-pretrained (distilled expert) | 8–10% | 43–61% | 23–45 | 35–51 | 5.7–6.9 |
+> | evader | vs run21 chaser | vs run17 chaser | mean zone of 12 |
+> |---|---:|---:|---:|
+> | scripted expert (privileged BFS, no NN) | **54.5%** | 27.7% | 10.5 |
+> | **run21 trained** (fixed physics, 300 blocks) | **40%** | **41%** | 10.1 |
+> | run17 / run19 / run20 trained (pre-fix physics) | 29% / 29% / 30% | 21% / 14% / 15% | 8.0-8.3 |
+> | DAgger distillation of the expert (no RL) | 29% | — | 8.8 |
+> | BC / init policy (per run) | 7-19% | 0-17% | 5.8-7.9 |
+> | fresh random init | **0%** (5 inits, 500 episodes) | — | ~2 |
 >
-> So: the pre-fix training runs **do not beat a random init** (run19 and run20
-> land below theirs), plain behaviour cloning of a 28% expert produces an 8%
-> student, and the scripted expert is the only entrant clearly ahead of noise.
-> The same conclusion holds in the earlier, chaser-crippled protocol
-> (expert 56%, trained 30–38%, random 37%) — the ordering is robust, the
-> absolute levels are not. `run21_fixed` is the first training run under fixed
-> physics, with a chaser that is itself competent (it catches the expert in 50%
-> of episodes); the cross-convention matrix against it is in
-> [docs/RESULTS.md](docs/RESULTS.md).
+> So: learning to escape is real and large (0% → 40%), the fixed-physics
+> retrain is the strongest and most chaser-robust policy in the repo, the
+> previously published 44%/57% are retracted, and the scripted expert remains
+> chaser-dependent (27.7% vs 54.5%) where the learned evader is not.
 >
-> Reproduce any row with:
-> `python hardarena.py --run results/run17 --chaser-run results/run17 --matches 100 --chaser stoch --set 07 --expert --legacy-obs --legacy-obs-chaser`
+> Reproduce a row with, e.g.:
+> `python hardarena.py --run results/run21_fixed --chaser-run results/run17 --matches 100 --chaser stoch --set 07 --expert --legacy-obs-chaser`
 >
 > The renderer is painterly Ori-style: blurred god-light, a vine-hung canopy,
 > parallax hills, moss-capped rock with drop shadows, glowing orbs, a gate

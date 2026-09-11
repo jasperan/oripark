@@ -300,3 +300,48 @@ partly "can you avoid the spikes and drift to the portal", and the honest
 opponent is a chaser retrained under fixed physics. `run21_fixed` is that run
 (run19's exact recipe, 300 blocks, seed 3, fixed physics); its results are
 appended below when it completes.
+
+## E18 — the "random" baseline was a trained snapshot (bug, FIXED)
+- `pool_ev_0.pt` was loaded as "random"/"untrained" by hardarena, eval,
+  progress, tournament and the hero GIF's UNTRAINED panel. It is neither: the
+  league trims its pool front (`ev_pool.pop(0)`) once it exceeds `pool_size`,
+  and the final save writes `pool_ev_{i}` from the trimmed list, so
+  `pool_ev_0` is the oldest *surviving trained* snapshot.
+- Evidence: weight L2 norm 77-92 vs 46 for a fresh init (finished policy:
+  73-92); escape rate 18-42% on hard arenas where five fresh inits escape
+  **0.0%** (500 episodes).
+- This also explains E13/E16's "each run's init was a chaos-lucky draw" — the
+  files it measured were early trained snapshots. The "true random floor"
+  table was built with a trained policy as member 0.
+- **Fix**: `selfplay.py` writes `pool_ev_boot.pt`/`pool_ch_boot.pt` at startup;
+  `oripark/baselines.py` resolves the pre-training checkpoint and labels
+  `pool_ev_0` honestly; `hardarena --random-seeds K` builds K fresh inits; a
+  test pins the norm relationship so the mislabel cannot silently return.
+
+## E19 — DAgger distillation of the scripted expert (POSITIVE)
+- Hypothesis: plain BC fails because the teacher is *privileged* (BFS planner
+  + exact state), so the student must be trained on states it actually visits.
+  Measured BC result before this: a 56% teacher distils into a 1-4% student
+  (8-19% in its own obs convention) that never leaves the first third of the
+  arena (zone 5.8-6.9 of 12).
+- Change: `oripark/dagger.py` — roll the student out, label every visited
+  state with the expert's action, train on those labels, with a decaying
+  expert mixing rate beta (1.0 -> 0.0 over 4-6 rounds). Also fixed the demo
+  collector pairing each action with the *next* observation.
+- **Result**: distillation alone (no RL, ~20 minutes) reaches **29%** escape
+  against the competence-restored chaser, versus 7-19% for BC and 29-30% for
+  the pre-fix PPO runs. Pure-student rollouts at beta=0 escape 69% on the
+  traversal arenas. The pursued variant (teacher sees a real chaser) is much
+  stronger than the ghost variant (29% vs 20%) — evasion must be demonstrated.
+- `train.py --init-evader <ckpt>` warm-starts PPO from it (run22).
+
+## E20 — first legitimate training run (run21_fixed, POSITIVE)
+- run19's exact recipe (300 blocks, 384² net, lr 4e-4, seed 3) re-run under
+  the fixed physics, so both sides learn a game where flying is impossible.
+- **Result**: 40% escape against its own chaser and 41% against run17's —
+  chaser-robust, versus the pre-fix runs at 29-30% and a fresh random init at
+  0%. The scripted expert swings 27.7-54.5% depending on the opponent, so
+  against the legacy chaser the learned policy is *better* than the expert.
+- Its chaser is the first competent pursuer in the repo (catches the expert in
+  50% of episodes), but it still dies on spikes in 19-43% of episodes — the
+  chaser-side failure modes are the next lever.
