@@ -1,0 +1,15 @@
+/home/ubuntu/personal/ori-engine/.venv/lib/python3.12/site-packages/stable_baselines3/common/vec_env/base_vec_env.py:78: UserWarning: The `render_mode` attribute is not defined in your environment. It will be set to None.
+  warnings.warn("The `render_mode` attribute is not defined in your environment. It will be set to None.")
+  oracle: 307/600 candidate arenas winnable by the scripted expert
+shared arena set: 307 expert-winnable arenas (built with legacy physics)
+/home/ubuntu/personal/ori-engine/.venv/lib/python3.12/site-packages/stable_baselines3/common/vec_env/base_vec_env.py:78: UserWarning: The `render_mode` attribute is not defined in your environment. It will be set to None.
+  warnings.warn("The `render_mode` attribute is not defined in your environment. It will be set to None.")
+  [legacy] escape 57.0% (57/100) caught 10 hazard 8 timeout 0 | climb steps 6033 phantom 4827 (489.9 tiles)
+  [fixed ] escape 35.0% (35/100) caught 24 hazard 11 timeout 0 | climb steps 1982 phantom 612 (63.6 tiles)
+Traceback (most recent call last):
+  File "/home/ubuntu/personal/ori-engine/.audit/verify/exploit_impact.py", line 208, in <module>
+    main()
+  File "/home/ubuntu/personal/ori-engine/.audit/verify/exploit_impact.py", line 184, in main
+    lines = [f"# Exploit impact: {args.run} vs {args.chaser_run} chaser ({args.set}, stoch)",
+                                                                          ^^^^^^^^
+AttributeError: 'Namespace' object has no attribute 'set'. Did you mean: 'aset'?

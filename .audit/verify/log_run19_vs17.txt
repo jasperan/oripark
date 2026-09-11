@@ -1,0 +1,10 @@
+/home/ubuntu/personal/ori-engine/.venv/lib/python3.12/site-packages/stable_baselines3/common/vec_env/base_vec_env.py:78: UserWarning: The `render_mode` attribute is not defined in your environment. It will be set to None.
+  warnings.warn("The `render_mode` attribute is not defined in your environment. It will be set to None.")
+  oracle: 307/600 candidate arenas winnable by the scripted expert
+hard-arena skill test: 100 matches, stochastic evader, stochastic chaser
+
+  random             escape 38.0% (38/100) caught 23 tm 39 len 231
+  BC-pretrained      escape 21.0% (21/100) caught 26 tm 53 len 255
+  trained (best)     escape 44.0% (44/100) caught 23 tm 33 len 234
+
+wrote .audit/verify/run19_vs_run17ch.md
