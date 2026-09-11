@@ -200,6 +200,7 @@ def _fmt(name: str, r: dict) -> str:
     return (f"  {name:<18} escape {r['esc_rate']:6.1%} ({r['esc']:>3}/{r['n']:<3}) "
             f"caught {r['caught']:>3} timeout {r['tm']:>3} "
             f"ev_hazard {r['ev_hazard']:>3} ch_hazard {r['ch_hazard']:>3} "
+            f"surv {r['surv_rate']:5.1%} "
             f"zone {r['zone']:5.1f} len {r['length']:4.0f}")
 
 
@@ -310,18 +311,20 @@ def main():
           f"frozen chaser (`{args.chaser}`), oracle `{args.oracle}` "
           f"({len(sampler.arenas)} arenas).",
           "",
-          "| policy | escape rate | escaped | caught | timeout | ev_hazard | "
-          "ch_hazard | mean zone | avg len |",
-          "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+          "| policy | escape rate | survival | escaped | caught | timeout | "
+          "ev_hazard | ch_hazard | mean zone | avg len |",
+          "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for r in sorted(rows, key=lambda r: -r["rate"]):
         if r.get("pop"):
             md.append(f"| {r['name']} | {r['rate']:.1%} (mean of K) | — | — | — "
-                      "| — | — | — | — |")
+                      "| — | — | — | — | — |")
             continue
         md.append(f"| {r['name']} | {r['rate']:.1%} ({r['esc']}/{r['n']}) "
-                  f"| {r['esc']} | {r['caught']} | {r['tm']} | {r['ev_hazard']} "
-                  f"| {r['ch_hazard']} | {r['zone']:.1f} | {r['length']:.0f} |")
+                  f"| {r['surv_rate']:.1%} | {r['esc']} | {r['caught']} | {r['tm']} "
+                  f"| {r['ev_hazard']} | {r['ch_hazard']} | {r['zone']:.1f} "
+                  f"| {r['length']:.0f} |")
     md += ["",
+           "`survival` = escaped + timeout + chaser-fell (the evader did not lose).",
            "`mean zone` = mean furthest arena zone (of 12) the evader reached;",
            "it discriminates policies that survive to the timestep limit without",
            "reaching the portal. Every finished episode counts in the escape-rate",

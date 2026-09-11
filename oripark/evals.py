@@ -41,6 +41,11 @@ def play_episodes(env, act_fn, max_steps: int, n_target: int) -> dict:
         "esc": counts["escaped"], "caught": counts["caught"], "tm": counts["timeout"],
         "ev_hazard": counts["ev_hazard"], "ch_hazard": counts["ch_hazard"],
         "esc_rate": counts["escaped"] / max(n_done, 1),
+        # the evader did not lose: reached the portal, outlasted the clock, or
+        # the chaser killed itself. Pairing this with esc_rate separates
+        # "could not find the portal" from "died trying".
+        "surv_rate": (counts["escaped"] + counts["timeout"]
+                      + counts["ch_hazard"]) / max(n_done, 1),
         "zone": float(np.mean(zones)) if zones else 0.0,
         "length": float(np.mean(lens)) if lens else 0.0,
     }
