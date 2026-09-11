@@ -59,7 +59,10 @@ def main():
     ap.add_argument("--deterministic", action="store_true",
                     help="eval with deterministic evader (stochastic is the default honest measure)")
     ap.add_argument("--baseline", action="store_true",
-                    help="also evaluate the untrained pool_ev_0 baseline for improvement comparison")
+                    help="also evaluate the pre-training baseline for the "
+                         "improvement comparison (pool_ev_boot.pt, else "
+                         "evader_init.pt — NOT pool_ev_0.pt, which is an early "
+                         "trained snapshot; see oripark/baselines.py)")
     args = ap.parse_args()
 
     tp, mp, ep = load_run_params(args.run)
@@ -99,7 +102,9 @@ Eval protocol: evader plays **{('deterministic' if ev_det else 'stochastic')}**,
     if args.baseline:
         base_path = os.path.join(args.run, "evader_init.pt")
         if not os.path.exists(base_path):
-            base_path = os.path.join(args.run, "pool_ev_0.pt")
+            from oripark.baselines import find_baseline
+            base_path, base_label = find_baseline(args.run)
+            base_path = base_path or os.path.join(args.run, "pool_ev_0.pt")
         base = load(base_path, "evader", tp, mp, ep, device)
         rb = run_eval(base.policy, ch.policy, sampler, mp, ep, n_envs)
         nb = rb["n"]
@@ -107,7 +112,7 @@ Eval protocol: evader plays **{('deterministic' if ev_det else 'stochastic')}**,
 
 | policy | matches | escape rate | caught | avg zone | avg length |
 |---|---|---|---|---|---|
-| untrained (pool_ev_0) | {nb} | {rb["esc"] / max(nb, 1):.2%} | {rb["caught"]} | {rb["zone"]:.1f} | {rb["length"]:.0f} steps |
+| baseline ({base_label}) | {nb} | {rb["esc"] / max(nb, 1):.2%} | {rb["caught"]} | {rb["zone"]:.1f} | {rb["length"]:.0f} steps |
 | trained (evader.zip) | {n} | {res["esc"] / max(n, 1):.2%} | {res["caught"]} | {res["zone"]:.1f} | {res["length"]:.0f} steps |
 | **improvement** | | **+{(res["esc"] / max(n, 1) - rb["esc"] / max(nb, 1)):.2%}** | **{res["caught"] - rb["caught"]:+d}** | **{res["zone"] - rb["zone"]:+.1f}** | **{res["length"] - rb["length"]:+.0f} steps** |
 """

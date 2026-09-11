@@ -262,7 +262,7 @@ def test_artifact_tables_share_one_denominator():
         [sys.executable, "hardarena.py", "--run", "results/run17",
          "--chaser-run", "results/run17", "--matches", "6", "--chaser",
          "stoch", "--set", "07", "--expert", "--out", "/tmp/_t_metric.md"],
-        capture_output=True, text=True, cwd=PROJECT_ROOT)
+        capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=900)
     assert out.returncode == 0, out.stderr[-2000:]
     text = open("/tmp/_t_metric.md").read()
     rows = [l for l in text.splitlines() if l.startswith("| ") and "%" in l]
@@ -308,3 +308,30 @@ def test_legacy_obs_flag_restores_the_training_time_scaling(mp, ep):
         "legacy obs must reproduce the pre-fix out-of-Box magnitudes "
         f"(max |legacy| = {np.max(np.abs(ld)):.2f})")
     fixed.close(); legacy.close()
+
+
+def test_pool_ev_0_is_not_the_untrained_baseline():
+    """The league trims its pool front, so the final pool_ev_0.pt is the oldest
+    *trained* snapshot. Every tool used to label it "random"/"untrained" and
+    report it as the floor; the pre-training baseline must come from
+    pool_ev_boot.pt (written at startup) or evader_init.pt instead."""
+    import os
+    from oripark.baselines import POOL0_LABEL, find_baseline, find_pool0
+    run = os.path.join(PROJECT_ROOT, "results", "run17")
+    base_path, label = find_baseline(run)
+    assert base_path and label in ("untrained init", "BC/init policy"), (base_path, label)
+    assert os.path.basename(base_path) != "pool_ev_0.pt"
+    p0, l0 = find_pool0(run)
+    assert p0 and "early trained snapshot" in l0, (p0, l0)
+    # weights: the labelled baseline is a fresh/BC init, pool_ev_0 is trained
+    import torch
+    def norm(sd):
+        return float(sum(float(v.float().pow(2).sum()) for v in sd.values()
+                         if v.dtype.is_floating_point) ** 0.5)
+    nb = norm(torch.load(base_path, map_location="cpu", weights_only=True))
+    n0 = norm(torch.load(p0, map_location="cpu", weights_only=True))
+    assert nb < n0 * 0.8, (
+        f"the baseline ({nb:.1f}) should be much closer to an init than "
+        f"pool_ev_0 ({n0:.1f}) — if these converge, the trim no longer "
+        f"explains the difference and the labels need revisiting")
+    assert POOL0_LABEL.startswith("pool b0")

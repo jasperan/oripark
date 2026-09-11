@@ -79,7 +79,9 @@ def main():
     ch_after = load_policy(ch_path, "chaser", tp, mp, ep, device)
     base_path = os.path.join(args.run, "evader_init.pt")
     if not os.path.exists(base_path):
-        base_path = os.path.join(args.run, "pool_ev_0.pt")
+        from oripark.baselines import find_baseline
+        base_path, base_label = find_baseline(args.run)
+        base_label = base_label or "pool_ev_0"
     ev_before = load_policy(base_path, "evader", tp, mp, ep, device)
     ev_after = load_policy(os.path.join(args.run, "evader.zip"), "evader", tp, mp, ep, device)
 
@@ -89,7 +91,7 @@ def main():
         fr, out = rec.run(args.max_steps)
         rec.close()
         print(f"before: outcome={out} len={len(fr)}")
-        clips.append((fr, out, "UNTRAINED (block 0)"))
+        clips.append((fr, out, f"UNTRAINED ({base_label})"))
         if args.ascii:
             print(ascii_frames(fr, arena, mp))
     if args.mode in ("after", "both"):

@@ -298,6 +298,12 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
     # true untrained baselines (the league pool trims old snapshots)
     torch.save(ev_pool[0].state_dict(), os.path.join(out_dir, "evader_init.pt"))
     torch.save(ch_pool[0].state_dict(), os.path.join(out_dir, "chaser_init.pt"))
+    # ...and a copy under a name the pool trim cannot shadow: ev_pool.pop(0)
+    # eventually removes the untrained member, so the final pool_ev_0.pt written
+    # below is the oldest *trained* snapshot, not the baseline. Tools used to
+    # label it "random"/"untrained" and reported it as the floor.
+    torch.save(ev_pool[0].state_dict(), os.path.join(out_dir, "pool_ev_boot.pt"))
+    torch.save(ch_pool[0].state_dict(), os.path.join(out_dir, "pool_ch_boot.pt"))
 
     # ---- behavior cloning: pretrain the evader on scripted expert demos ----
     bc_demos = None

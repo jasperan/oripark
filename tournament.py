@@ -118,7 +118,8 @@ def entrants_for(run_dir, tp, mp, ep, max_checkpoints=8):
     """Ordered entrant list: random init -> BC -> checkpoints -> final, plus
     the scripted expert as a reference player."""
     ents = []
-    p0 = os.path.join(run_dir, "pool_ev_0.pt")
+    from oripark.baselines import find_baseline
+    p0, _ = find_baseline(run_dir)
     if os.path.exists(p0):
         ents.append(("random-init", p0))
     bi = os.path.join(run_dir, "evader_init.pt")

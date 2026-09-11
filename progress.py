@@ -86,11 +86,12 @@ def main():
 
     ch = load(os.path.join(args.run, "chaser.zip"), "chaser", tp, mp, ep)
 
-    # checkpoints: evader_init (true untrained baseline) + evader_b{block}.zip
+    # checkpoints: the pre-training baseline + evader_b{block}.zip
     base_path = os.path.join(args.run, "evader_init.pt")
     if not os.path.exists(base_path):
-        base_path = os.path.join(args.run, "pool_ev_0.pt")
-    ckpts = [("init (untrained)", base_path, 0)]
+        from oripark.baselines import find_baseline
+        base_path, _ = find_baseline(args.run)
+    ckpts = [("init (pre-training)", base_path, 0)]
     for p in sorted(glob.glob(os.path.join(args.run, "evader_b*.zip"))):
         m = re.search(r"evader_b(\d+)\.zip", p)
         ckpts.append((m.group(1), p, int(m.group(1))))

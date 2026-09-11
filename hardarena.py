@@ -219,7 +219,7 @@ def main():
     ap.add_argument("--max-checkpoints", type=int, default=8)
     ap.add_argument("--random-seeds", type=int, default=1,
                     help="random entrant = population of K deterministic inits "
-                         "(member 0 = the run's own pool_ev_0); mean+min/max "
+                         "(all members are fresh inits); mean+min/max "
                          "reported — turns the chaotic-init floor into a "
                          "measured distribution")
     ap.add_argument("--legacy-obs-chaser", action="store_true",
@@ -259,13 +259,16 @@ def main():
 
     ch = load(os.path.join(crun, "chaser.zip"), "chaser", ctp, cmp_, cep)
 
+    from oripark.baselines import find_baseline, find_pool0
     ents = []
-    p0 = os.path.join(args.run, "pool_ev_0.pt")
-    if os.path.exists(p0):
-        ents.append(("random", p0))
-    bi = os.path.join(args.run, "evader_init.pt")
-    if os.path.exists(bi):
-        ents.append(("BC-pretrained", bi))
+    # the pre-training baseline (see oripark/baselines.py: pool_ev_0.pt is NOT
+    # it — the league trims the untrained member out of the pool)
+    bp, blabel = find_baseline(args.run)
+    if bp:
+        ents.append((blabel, bp))
+    p0, p0label = find_pool0(args.run)
+    if p0:
+        ents.append((p0label, p0))
     if args.entrants == "all":
         cks = sorted(glob.glob(os.path.join(args.run, "evader_b*.zip")))
         if len(cks) > args.max_checkpoints:
@@ -284,29 +287,6 @@ def main():
     print(f"hard-arena skill test: {args.matches} matches, stochastic evader, {mode}\n")
     rows = []
     for name, path in ents:
-        if name == "random" and args.random_seeds > 1:
-            rates = []
-            for i in range(args.random_seeds):
-                if i == 0:
-                    ev = load(path, "evader", tp, mp, ep)
-                else:
-                    env = OriArenaVecEnv(
-                        "evader", 1, FixedSampler(gen), mp, ep, seed=0)
-                    torch.manual_seed(1000 + i)
-                    ev = make_ppo(env, tp, 1000 + i, "cpu", "evader")
-                    env.close()
-                r = escape_rate(ev.policy, ch.policy, sampler, mp, ep,
-                                args.matches,
-                                chaser_stoch=(args.chaser == "stoch"), opp_ep=cep)
-                rates.append(r["esc_rate"])
-                print(f"  random init #{i:<2}" + _fmt("", r), flush=True)
-            rates = np.array(rates)
-            rows.append({"name": f"random pop (K={args.random_seeds})",
-                         "rate": float(rates.mean()), "pop": True})
-            print(f"  random population K={args.random_seeds}: mean {rates.mean():.1%} "
-                  f"min {rates.min():.1%} max {rates.max():.1%} "
-                  f"spread {rates.max() - rates.min():.1%}", flush=True)
-            continue
         if path == "__expert__":
             r = expert_escape_rate(
                 ch.policy, sampler, mp, ep, args.matches,
@@ -319,6 +299,28 @@ def main():
         r["rate"] = r["esc_rate"]
         rows.append(r)
         print(_fmt(name, r), flush=True)
+
+    # ---- fresh-init population (the true random floor): every member is an
+    # independent random init; it used to reuse the run's pool_ev_0 as member 0,
+    # which is an early TRAINED snapshot (see oripark/baselines.py)
+    if args.random_seeds > 1:
+        rates = []
+        for i in range(args.random_seeds):
+            env = OriArenaVecEnv("evader", 1, FixedSampler(gen), mp, ep, seed=0)
+            torch.manual_seed(1000 + i)
+            ev = make_ppo(env, tp, 1000 + i, "cpu", "evader")
+            env.close()
+            r = escape_rate(ev.policy, ch.policy, sampler, mp, ep, args.matches,
+                            chaser_stoch=(args.chaser == "stoch"), opp_ep=cep)
+            rates.append(r["esc_rate"])
+            print(f"  fresh init #{i:<2}" + _fmt("", r), flush=True)
+        rates = np.array(rates)
+        rows.append({"name": f"random pop (K={args.random_seeds})",
+                     "rate": float(rates.mean()), "pop": True,
+                     "lo": float(rates.min()), "hi": float(rates.max())})
+        print(f"  fresh-init population K={args.random_seeds}: mean "
+              f"{rates.mean():.1%} min {rates.min():.1%} max {rates.max():.1%} "
+              f"spread {rates.max() - rates.min():.1%}", flush=True)
 
     md = [f"# Hard-arena skill test (`{args.run}`, {mode})",
           "",
@@ -333,8 +335,10 @@ def main():
           "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
     for r in sorted(rows, key=lambda r: -r["rate"]):
         if r.get("pop"):
-            md.append(f"| {r['name']} | {r['rate']:.1%} (mean of K) | — | — | — "
-                      "| — | — | — | — | — |")
+            md.append(f"| {r['name']} | {r['rate']:.1%} | — | — | — "
+                      "| — | — | — | — | — |\n"
+                      f"|  min / max init | {r['lo']:.1%} / {r['hi']:.1%} "
+                      "| — | — | — | — | — | — | — | — |")
             continue
         md.append(f"| {r['name']} | {r['rate']:.1%} ({r['esc']}/{r['n']}) "
                   f"| {r['surv_rate']:.1%} | {r['esc']} | {r['caught']} | {r['tm']} "
