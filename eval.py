@@ -27,7 +27,7 @@ def load(path, role, tp, mp, ep, device):
         env.close()
         return ppo
     ppo = make_ppo(env, tp, 0, device, side=role)
-    ppo.policy.load_state_dict(torch.load(path, map_location=device))
+    ppo.policy.load_state_dict(torch.load(path, map_location=device, weights_only=True))
     env.close()
     return ppo
 

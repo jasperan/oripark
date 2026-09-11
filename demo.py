@@ -37,7 +37,7 @@ def load_policy(pt_path: str, role: str, tp: TrainParams, mp: MoveParams,
         env.close()
         return ppo
     ppo = make_ppo(env, tp, 0, device, side=role)
-    sd = torch.load(pt_path, map_location=device)
+    sd = torch.load(pt_path, map_location=device, weights_only=True)
     ppo.policy.load_state_dict(sd)
     env.close()
     return ppo

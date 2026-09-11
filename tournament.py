@@ -34,7 +34,7 @@ def load_policy(path, role, tp, mp, ep, device="cpu"):
         p = PPO.load(path, env=env, device=device)
     else:
         p = make_ppo(env, tp, 0, device, side=role)
-        p.policy.load_state_dict(torch.load(path, map_location=device))
+        p.policy.load_state_dict(torch.load(path, map_location=device, weights_only=True))
     env.close()
     return p
 
