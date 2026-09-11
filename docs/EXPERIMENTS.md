@@ -345,3 +345,35 @@ appended below when it completes.
 - Its chaser is the first competent pursuer in the repo (catches the expert in
   50% of episodes), but it still dies on spikes in 19-43% of episodes — the
   chaser-side failure modes are the next lever.
+
+## E21 — DAgger scaling, and the chaser side (mixed)
+- **Scaling the evader distillation works.** Same method, more data:
+  ghost teacher 20% -> pursued-vs-snapshot teacher 24% -> pursued-vs-final-chaser
+  teacher, 8 rounds x 96 eps, 25.5k pairs: **30.7%** escape (100 matches vs
+  run21's chaser), i.e. the distillation alone now beats every pre-fix PPO run
+  (29-30%) and sits at 56% of the scripted expert's 54.5%. Pure-student
+  rollouts (beta=0, no expert help) escape 37.5% against the same chaser.
+- **The chaser-side distillation fixes suicide but is too weak to use.**
+  Learned chasers die on spikes in 19-43% of episodes, handing the evader wins
+  unrelated to evasion, so the scripted pursuer (never suicides) was distilled
+  into a learned chaser: ch_hazard fell to ~2%, but the student catches only
+  15-35% of episodes where the scripted teacher catches 60-87% and run21's
+  trained chaser catches ~30-45%. Result: against the distilled chaser every
+  entrant's escape rate inflates (run21 57%, its early snapshot 68%, the expert
+  64.4%), so it is a bad training opponent. Kept as a "no-suicide" reference
+  opponent rather than as a warm start.
+- Consequence for the ladder: run23 uses the stronger *evader* init
+  (E21's 30.7% distillation), not the chaser warm start.
+
+## E22 — a fixed, non-suicidal opponent for the metric (POSITIVE, tooling)
+- The learned chasers drift (retrained as recipes change) and hand out
+  `ch_hazard` wins, so `hardarena --scripted-chaser` was added: the privileged
+  pursuer as a frozen opponent. It never suicides (ch_hazard ~0-1%) and never
+  changes, so it is a stable yardstick for comparing evaders across runs.
+- First measurements (100 matches, 310 calm arenas): run17 trained 37%,
+  run21 trained 31%, run21 early snapshot 36%, fresh init 0%, BC init 1-11%
+  (with 82% ev_hazard), scripted expert **11%** — the expert is caught in 87%
+  of episodes by its own scripted pursuer, while learned evaders survive it
+  three times as often. Being unpredictable is worth more than planning
+  against this particular pursuer; the finding is worth remembering when
+  reading "expert" as a ceiling.
