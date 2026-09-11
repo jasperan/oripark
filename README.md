@@ -17,24 +17,35 @@ level generator) that keeps the curriculum at the edge of the agents' skill.
 > movement bug: `wall_dir` was never cleared and wall
 > climb/jump/slide never tested for actual wall contact, so agents could climb
 > at 170 px/s **in mid-air** anywhere on the map. The earlier headline results
-> are retracted. Measured on the corrected protocol — fixed physics, 310
-> expert-winnable hard arenas, stochastic frozen chaser, 100 seeded matches,
-> identical draws for every entrant:
+> are retracted, and so is the first correction published here: that one fed
+> the frozen chasers observations in a convention they were never trained on
+> (see below), which crippled them and inflated everybody's escape rate.
 >
-> | entrant | escape | survival (not caught / not impaled) | mean zone of 12 |
-> |---|---:|---:|---:|
-> | scripted expert (privileged state) | **56%** | 66% | 12.7 |
-> | run17 trained (old arch) | 38% | 59% | 10.6 |
-> | run19 trained (new arch) | 33% | 57% | 10.0 |
-> | run20 trained (new arch) | 30% | 62% | 11.0 |
-> | random init | 37% | 59% | 10.2 |
-> | BC-pretrained | 1–4% | 58% | 5.9 |
+> Corrected protocol — fixed physics, 310 expert-winnable hard arenas, seeded
+> draws, stochastic frozen chaser, and **each policy fed the observation
+> convention it was trained in**:
 >
-> So the pre-fix training runs **do not beat a random init** once free flight
-> is removed, and roughly a third of their episodes end on spikes. `run21_fixed`
-> is the first legitimate training run (same recipe as run19, fixed physics).
+> | entrant | escape | survived | caught | chaser fell | mean zone of 12 |
+> |---|---:|---:|---:|---:|---:|
+> | scripted expert (privileged state, no NN) | **28–33%** | 54–71% | 46/27 | 26/38 | 8.0–8.7 |
+> | run17 trained (old arch) | 21% | 56% | 33 | 35 | 7.6 |
+> | run19 trained (new arch) | 14% | 47% | 37 | 33 | 7.2 |
+> | run20 trained (new arch) | 15% | 71% | 16 | 56 | 7.9 |
+> | random init | 18–25% | 52–72% | 19–36 | 34–49 | 6.0–7.5 |
+> | BC-pretrained (distilled expert) | 8–10% | 43–61% | 23–45 | 35–51 | 5.7–6.9 |
+>
+> So: the pre-fix training runs **do not beat a random init** (run19 and run20
+> land below theirs), plain behaviour cloning of a 28% expert produces an 8%
+> student, and the scripted expert is the only entrant clearly ahead of noise.
+> The same conclusion holds in the earlier, chaser-crippled protocol
+> (expert 56%, trained 30–38%, random 37%) — the ordering is robust, the
+> absolute levels are not. `run21_fixed` is the first training run under fixed
+> physics, with a chaser that is itself competent (it catches the expert in 50%
+> of episodes); the cross-convention matrix against it is in
+> [docs/RESULTS.md](docs/RESULTS.md).
+>
 > Reproduce any row with:
-> `python hardarena.py --run results/run17 --chaser-run results/run17 --matches 100 --chaser stoch --set 07 --expert`
+> `python hardarena.py --run results/run17 --chaser-run results/run17 --matches 100 --chaser stoch --set 07 --expert --legacy-obs --legacy-obs-chaser`
 >
 > The renderer is painterly Ori-style: blurred god-light, a vine-hung canopy,
 > parallax hills, moss-capped rock with drop shadows, glowing orbs, a gate

@@ -30,7 +30,7 @@ ORI_LEGACY_PHYSICS=1 python -m pytest tests/test_physics.py -q   # 4 fail (proof
 | run19 BC NLL 0.15 | **UNSUPPORTED** | `bc.py` prints NLL, nothing persists it |
 | `selected.txt` "ships b270 / b170" | **UNSUPPORTED as reproducible** | hand-written; `select.py` emits a different format |
 | the arena oracle marks "~half of hard arenas winnable" | **REFUTED** (it reported 15%) | the oracle ran the expert in permanent panic mode, §3 |
-| "the random floor is 4-8%, trained beats it by +27 to +49" | **REFUTED** under the corrected protocol | random init escapes 30.8% (see §4) |
+| "the random floor is 4-8%, trained beats it by +27 to +49" | **REFUTED** under both corrected protocols | random inits escape 18-37%, trained 14-38% (§4) |
 | docs/configs/run{N}_params.json == results/run{N}/params.json | VERIFIED | byte-identical |
 | every `docs/media` link resolves | VERIFIED | all files present |
 | full-jump apex 144 px, terminal velocity 1600 px/s, no tunnelling | VERIFIED | `tests/test_physics.py` |
@@ -80,23 +80,61 @@ Now: `--oracle calm` (default) parks the chaser and feeds the real position →
 **310/600** winnable; `--oracle panic` reproduces the legacy filter.
 `tests/test_contracts.py::test_oracle_calm_filter_is_not_panic_mode` pins it.
 
-## 4. Corrected measurements (calm oracle, fixed physics)
+## 4. Corrected measurements
 
-`hardarena.py --matches 100 --chaser stoch --set 07 --expert`, seeded draws,
-stochastic frozen chaser, 310 expert-winnable arenas:
+Two protocols matter, because the observation-units fix (F3) also changed what
+the *frozen chasers* see. A pre-fix chaser evaluated in the post-fix
+convention receives inputs 32x smaller than it trained on; it becomes a
+crippled opponent that catches 7-34% of episodes instead of 27-46%, and every
+entrant's escape rate inflates. `hardarena.py` now has per-side switches
+(`--legacy-obs`, `--legacy-obs-chaser`) so each policy can be measured in the
+convention it was trained in.
 
-| entrant | escape | survival | caught | ev_hazard | ch_hazard | mean zone |
+**Protocol A — every policy in its own training convention ("honest").**
+Fixed physics, calm oracle (310 arenas), stochastic frozen chaser, 100 seeded
+matches, identical draws per entrant:
+
+| entrant | chaser | escape | survived | caught | ev_hazard | ch_hazard | zone |
+|---|---|---:|---:|---:|---:|---:|---:|
+| scripted expert | run17 | **27.7%** | 53.5% | 46 | 1 | 26 | 8.0 |
+| scripted expert | run19 | **33.0%** | 71.0% | 27 | 2 | 38 | 8.7 |
+| run17 trained | run17 | 21% | 56% | 33 | 11 | 35 | 7.6 |
+| run19 trained | run17 | 14% | 47% | 37 | 16 | 33 | 7.2 |
+| run20 trained | run19 | 15% | 71% | 16 | 13 | 56 | 7.9 |
+| random init | run17 / run19 | 18% / 23% | 52% / 72% | 34 / 19 | 14 / 9 | 34 / 49 | 7.6 / 7.5 |
+| BC-pretrained | run17 | 8% | 43% | 45 | 12 | 35 | 5.7 |
+
+**Protocol B — chaser fed the post-fix convention (a pre-fix chaser is
+crippled):**
+
+| entrant | escape | survival | caught | ev_hazard | ch_hazard | zone |
 |---|---:|---:|---:|---:|---:|---:|
-| scripted expert (privileged) | 56% | 66% | 34 | 0 | 10 | 12.7 |
-| run17 trained (old arch) | 38% | 59% | 8 | 33 | 21 | 10.6 |
-| run19 trained (new arch) | 33% | 57% | 9 | 27 | 31 | 10.0 |
-| run20 trained (new arch) | 30% | 62% | 27 | 18 | 25 | 11.0 |
-| random init (`pool_ev_0`) | 37% | 59% | 7 | 34 | 22 | 10.2 |
+| scripted expert | 56% | 66% | 34 | 0 | 10 | 12.7 |
+| run17 trained | 38% | 59% | 8 | 33 | 21 | 10.6 |
+| run19 trained | 33% | 57% | 9 | 27 | 31 | 10.0 |
+| run20 trained | 30% | 62% | 27 | 18 | 25 | 11.0 |
+| random init | 36-37% | 59% | 7-15 | 31-34 | 18-22 | 10.2-10.3 |
 | BC-pretrained | 1-4% | 58% | 4 | 35 | 48 | 5.9 |
 
-Read: **every pre-fix "trained" evader is at random-init level** once the
-exploit is gone, and a third of their episodes end impaled on spikes. The
-headline improvement claims of the earlier docs do not survive verification.
+**Both protocols agree on the ordering, which is the robust part of this
+audit:** the pre-fix "trained" evaders sit at random-init level or below it
+(run19 and run20 land *below* their own random init), plain behaviour cloning
+of the expert produces something worse than random, and the scripted expert —
+which plans with BFS over the tile grid — is the only entrant well ahead of
+noise. The absolute levels depend heavily on the chaser: with a competent
+pursuer the expert escapes 28-33%, not 56%.
+
+Two further readings fall out of the columns:
+
+* **The dominant failure mode is the spikes, not the chaser.** Random inits
+  and trained evaders impale themselves in 9-16% of episodes and the *chasers*
+  kill themselves in 34-56%; being caught accounts for 16-37%.
+* **The old chasers are also exploit-trained.** They learned to fly too, so
+  even in their own convention they spend much of the episode airborne and
+  falling onto hazards (run20's evader "survives" 71% of episodes mostly
+  because its pursuer dies). The only competent pursuer in this repo is
+  `run21_fixed`'s, trained under fixed physics; it catches the scripted expert
+  in 50% of episodes.
 
 ## 5. Metric defects (each found by re-running, each now tested)
 
