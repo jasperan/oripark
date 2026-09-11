@@ -502,6 +502,30 @@ def collect_demos(env, scripted, n_episodes: int, max_steps: int,
                               "waves": total_waves}
 
 
+def expert_act_fn(env):
+    """VecEnv-compatible act_fn driving ScriptedEvader agents from privileged
+    state (used to measure the scripted expert on the same protocol as the
+    learned policies, and as a DAgger teacher)."""
+    n = env.n_envs
+    experts = [ScriptedEvader(env.p, env.ep) for _ in range(n)]
+
+    def act(_obs):
+        acts = []
+        ph = env.phys
+        for i in range(n):
+            ar = env.arenas[i]
+            if env.t[i] == 0:
+                experts[i].reset(ar)
+            ci = n + i
+            acts.append(experts[i].act(
+                ar, ph.x[i], ph.y[i], ph.vx[i], ph.vy[i], ph.on_ground[i],
+                ph.wall_dir[i], ph.can_djump[i], ph.can_dash[i], ph.dash_t[i],
+                ph.bash_cd[i], ph.facing[i], chaser_x=ph.x[ci], chaser_y=ph.y[ci]))
+        return np.stack(acts)
+
+    return act
+
+
 if __name__ == "__main__":
     # quick self-test: scripted traversal escape rate on fixed arenas
     import sys, os

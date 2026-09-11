@@ -167,3 +167,30 @@ def test_play_episodes_stops_at_the_target():
     r = play_episodes(env, lambda obs: np.zeros((1, 5), dtype=np.int32),
                       max_steps=1000, n_target=3)
     assert r["n"] == 3, f"ran {r['n']} episodes for a target of 3"
+
+
+# ------------------------------------------------------------------ oracle
+def test_oracle_calm_filter_is_not_panic_mode(mp, ep):
+    """The arena oracle must hand the expert the REAL chaser position.
+
+    It used to pass the expert its own position as `chaser_x/y`, which pins
+    its flee logic permanently on (panic hops/dashes) and made the filter
+    reject arenas a calm expert traverses easily — the documented '~half of
+    hard arenas are winnable' became 15%.
+    """
+    from hardarena import expert_winnable
+    from oripark.arena import ArenaGenerator
+    gen = ArenaGenerator(mp, np.random.default_rng(1), chaser_frac=ep.chaser_spawn_frac)
+    cands = []
+    k = 0
+    while len(cands) < 48:
+        a = gen.generate(np.full(6, 0.7), seed=5000 + k)
+        if a is not None:
+            cands.append(a)
+        k += 1
+    calm = expert_winnable(cands, mp, ep, batch=16, mode="calm")
+    panic = expert_winnable(cands, mp, ep, batch=16, mode="panic")
+    assert len(calm) > len(panic), (
+        f"calm oracle ({len(calm)}) should accept more arenas than the "
+        f"panic-mode filter ({len(panic)})")
+    assert len(calm) >= 8, f"calm oracle accepted only {len(calm)}/48 arenas"

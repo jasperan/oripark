@@ -62,7 +62,7 @@ class HardSampler:
     reachability."""
 
     def __init__(self, gen, n, mp, ep, seed0=5000, max_cand=600,
-                 mix="mixed"):
+                 mix="mixed", oracle="calm"):
         self.gen, self.n, self.mp, self.ep = gen, n, mp, ep
         self.arenas = []
         cands, params = [], []
@@ -81,9 +81,9 @@ class HardSampler:
                 cands.append(a)
                 params.append(p)
             k += 1
-        self.arenas = expert_winnable(cands, mp, ep)
-        print(f"  oracle: {len(self.arenas)}/{len(cands)} candidate arenas "
-              f"winnable by the scripted expert", flush=True)
+        self.arenas = expert_winnable(cands, mp, ep, mode=oracle)
+        print(f"  oracle ({oracle}): {len(self.arenas)}/{len(cands)} candidate "
+              f"arenas winnable by the scripted expert", flush=True)
         if len(self.arenas) < n:
             raise SystemExit(f"only {len(self.arenas)} winnable arenas; "
                              f"lower --matches or raise max_cand")
@@ -92,9 +92,20 @@ class HardSampler:
         return [self.arenas[k % len(self.arenas)] for k in range(n)]
 
 
-def expert_winnable(arenas, mp, ep, max_steps=None, batch=16):
+def expert_winnable(arenas, mp, ep, max_steps=None, batch=16, mode="calm"):
     """Return the arenas the scripted evader escapes with NO chaser — the
-    oracle for 'hard but fair'."""
+    oracle for 'hard but fair'.
+
+    mode="calm"  (default, the documented intent): the chaser is parked out of
+                  the way and the expert gets the REAL chaser position, so it
+                  plays a calm traversal the way a competent player would.
+    mode="panic" (legacy reproduction): the expert is handed its OWN position
+                  as the chaser position, which pins `flee` permanently True
+                  (panic hops/dashes), and a RANDOM chaser wanders the arena
+                  (it can catch the evader or impale itself). That filter is
+                  stricter and noisier than it claims to be — kept only so
+                  pre-2026-09 numbers can be reproduced.
+    """
     from oripark.scripted import ScriptedEvader
     max_steps = max_steps or ep.max_steps
     win = np.zeros(len(arenas), dtype=bool)
@@ -106,7 +117,8 @@ def expert_winnable(arenas, mp, ep, max_steps=None, batch=16):
                 return [chunk[k % len(chunk)] for k in range(m)]
 
         env = OriArenaVecEnv("evader", len(chunk), Fix(), mp, ep,
-                             opponent=None, seed=0)
+                             opponent=None, seed=0,
+                             chaser_ghost=(mode == "calm"))
         scripts = [ScriptedEvader(mp, ep) for _ in range(len(chunk))]
         obs = env.reset()
         steps = np.zeros(len(chunk), dtype=np.int32)
@@ -122,12 +134,16 @@ def expert_winnable(arenas, mp, ep, max_steps=None, batch=16):
                 if steps[i] == 0:
                     sp.reset(ar)
                 phys = env.phys
+                if mode == "panic":                 # legacy bug reproduction
+                    ch_x = ch_y = phys.x[i]
+                else:
+                    ch_x, ch_y = phys.x[len(chunk) + i], phys.y[len(chunk) + i]
                 acts.append(sp.act(ar, phys.x[i], phys.y[i], phys.vx[i],
                                    phys.vy[i], phys.on_ground[i],
                                    phys.wall_dir[i], phys.can_djump[i],
                                    phys.can_dash[i], phys.dash_t[i],
                                    phys.bash_cd[i], phys.facing[i],
-                                   chaser_x=phys.x[i], chaser_y=phys.y[i]))
+                                   chaser_x=ch_x, chaser_y=ch_y))
             acts = np.stack(acts)
             obs, _, done, infos = env.step(acts)
             steps += 1
@@ -172,6 +188,22 @@ def escape_rate(ev_pol, ch_pol, sampler, mp, ep, n_matches, chaser_stoch: bool,
         float(np.mean(lens)) if lens else 0.0
 
 
+def expert_escape_rate(ch_pol, sampler, mp, ep, n_matches, chaser_stoch: bool,
+                       seed: int = 7, opp_ep=None):
+    """Scripted-expert escape rate on the same protocol (privileged state)."""
+    from oripark.scripted import expert_act_fn
+    from oripark.evals import play_episodes
+    n_envs = min(n_matches, 32)
+    if chaser_stoch:
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+    env = OriArenaVecEnv("evader", n_envs, sampler, mp, ep,
+                         opponent=frozen_policy(ch_pol, deterministic=not chaser_stoch),
+                         seed=seed, opp_ep=opp_ep)
+    r = play_episodes(env, expert_act_fn(env), ep.max_steps, n_matches)
+    return (r["esc_rate"], r["esc"], r["caught"], r["tm"], r["length"])
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="results/run17")
@@ -190,6 +222,13 @@ def main():
                          "(member 0 = the run's own pool_ev_0); mean+min/max "
                          "reported — turns the chaotic-init floor into a "
                          "measured distribution")
+    ap.add_argument("--oracle", choices=["calm", "panic"], default="calm",
+                    help="arena filter: 'calm' = competent traversal (default, "
+                         "documented intent); 'panic' = legacy buggy filter that "
+                         "handed the expert its own position as the chaser")
+    ap.add_argument("--expert", action="store_true",
+                    help="also evaluate the scripted expert (privileged-state "
+                         "controller) as an entrant on the same arena set")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -200,7 +239,8 @@ def main():
     set_nets_from_run(ctp, crun)
     rng = np.random.default_rng(1)
     gen = ArenaGenerator(mp, rng, chaser_frac=ep.chaser_spawn_frac)
-    sampler = HardSampler(gen, args.matches, mp, ep, mix=args.set)
+    sampler = HardSampler(gen, args.matches, mp, ep, mix=args.set,
+                          oracle=args.oracle)
 
     ch = load(os.path.join(crun, "chaser.zip"), "chaser", ctp, cmp_, cep)
 
@@ -222,6 +262,8 @@ def main():
     fin = os.path.join(args.run, "evader.zip")
     if os.path.exists(fin):
         ents.append(("trained (best)", fin))
+    if args.expert:
+        ents.append(("scripted expert", "__expert__"))
 
     mode = "stochastic chaser" if args.chaser == "stoch" else "deterministic chaser"
     print(f"hard-arena skill test: {args.matches} matches, stochastic evader, {mode}\n")
@@ -254,6 +296,14 @@ def main():
             rows.append((f"  max init", rates.max(), 0, 0, 0, 0))
             print(f"  random population K={args.random_seeds}: mean {mean:.1%} "
                   f"min {rates.min():.1%} max {rates.max():.1%}", flush=True)
+            continue
+        if path == "__expert__":
+            rate, esc, caught, tm, length = expert_escape_rate(
+                ch.policy, sampler, mp, ep, args.matches,
+                chaser_stoch=(args.chaser == "stoch"), opp_ep=cep)
+            rows.append((name, rate, esc, caught, tm, length))
+            print(f"  {name:<18} escape {rate:.1%} ({esc}/{args.matches}) "
+                  f"caught {caught} tm {tm} len {length:.0f}", flush=True)
             continue
         ev = load(path, "evader", tp, mp, ep)
         rate, esc, caught, tm, length = escape_rate(
