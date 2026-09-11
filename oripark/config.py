@@ -134,6 +134,8 @@ class TrainParams:
     ladder_blocks: int = 120
     bc_episodes: int = 400                   # scripted demos for BC pretraining
     bc_epochs: int = 8                       # BC epochs (0 = skip behavior cloning)
+    init_evader: str | None = None           # warm-start evader checkpoint (state dict)
+    init_chaser: str | None = None           # warm-start chaser checkpoint
     bc_flee_frac: float = 0.35               # fraction of BC demos collected with a
                                              # pursuer hovering behind (flee patterns)
     bc_pursued_dx: float = -120.0            # fake chaser offset for flee demos

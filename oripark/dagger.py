@@ -54,13 +54,20 @@ class StaticArenaSampler:
 
 def dagger_collect(env, scripts, policy, n_episodes: int, max_steps: int,
                    beta: float = 0.5, deterministic: bool = False,
-                   device: str = "cpu", seed: int = 0, keep_failures: bool = True):
+                   device: str = "cpu", seed: int = 0, keep_failures: bool = True,
+                   role: str = "evader"):
     """Roll the student out, label every visited state with the expert action.
 
     Returns (obs_list, act_list, stats). `beta` is the per-env probability of
     taking the expert's action instead of the student's.
+
+    `role` picks which agent is the learner: evaders occupy indices 0..N-1 and
+    chasers N..2N-1 in the vectorised env, while the *learner* is whichever
+    slice the env was built for. So for role="chaser" the expert reads the
+    chaser slice (N+i) and looks at the evader at i, and vice versa.
     """
     N = env.n_envs
+    nd = 5 if role == "evader" else 3
     rng = np.random.default_rng(seed)
     obs_buf, act_buf = [], []
     ep_obs = [[] for _ in range(N)]
@@ -74,18 +81,26 @@ def dagger_collect(env, scripts, policy, n_episodes: int, max_steps: int,
                    if beta < 1.0 else None)
         take_expert = (np.ones(N, dtype=bool) if student is None
                        else rng.random(N) < beta)
-        acts = np.zeros((N, 5), dtype=np.int64)
+        acts = np.zeros((N, nd), dtype=np.int64)
         phys = env.phys
         for i in range(N):
             sp = scripts[i]
             if ep_steps[i] == 0:
                 sp.reset(env.arenas[i])
             # the label is the expert's action in the state the STUDENT is in
-            expert_a = sp.act(env.arenas[i], phys.x[i], phys.y[i], phys.vx[i],
-                              phys.vy[i], phys.on_ground[i], phys.wall_dir[i],
-                              phys.can_djump[i], phys.can_dash[i],
-                              phys.dash_t[i], phys.bash_cd[i], phys.facing[i],
-                              chaser_x=phys.x[N + i], chaser_y=phys.y[N + i])
+            if role == "evader":
+                expert_a = sp.act(env.arenas[i], phys.x[i], phys.y[i], phys.vx[i],
+                                  phys.vy[i], phys.on_ground[i], phys.wall_dir[i],
+                                  phys.can_djump[i], phys.can_dash[i],
+                                  phys.dash_t[i], phys.bash_cd[i], phys.facing[i],
+                                  chaser_x=phys.x[N + i], chaser_y=phys.y[N + i])
+            else:
+                k = N + i                      # the learner (chaser) is at N+i
+                expert_a = sp.act(env.arenas[i], phys.x[k], phys.y[k], phys.vx[k],
+                                  phys.vy[k], phys.on_ground[k], phys.wall_dir[k],
+                                  phys.can_djump[k], phys.can_dash[k],
+                                  phys.dash_t[k], phys.facing[k],
+                                  evader_x=phys.x[i], evader_y=phys.y[i])
             ep_obs[i].append(obs[i])
             ep_act[i].append(expert_a)
             acts[i] = expert_a if take_expert[i] else student[i]
@@ -109,14 +124,14 @@ def dagger_collect(env, scripts, policy, n_episodes: int, max_steps: int,
 
 def dagger_rounds(env, scripts, policy, rounds: int = 4, episodes: int = 64,
                   epochs: int = 4, lr: float = 3e-4, device: str = "cpu",
-                  max_steps: int = 1500, log=print):
+                  max_steps: int = 1500, log=print, role: str = "evader"):
     """Interleaved collect/train rounds with a decaying expert mixing rate."""
     hist = []
     for r in range(rounds):
         beta = max(0.0, 1.0 - r / max(1, rounds - 1))
         obs_list, act_list, stats = dagger_collect(
             env, scripts, policy, n_episodes=episodes, max_steps=max_steps,
-            beta=beta, device=device, seed=1000 + r)
+            beta=beta, device=device, seed=1000 + r, role=role)
         if not obs_list:
             log(f"[dagger] round {r + 1}: no data, stopping")
             break
@@ -152,6 +167,11 @@ def main():
                     help="run the frozen chaser in the pre-fix obs convention, "
                          "i.e. the convention it was trained in (without this "
                          "a pre-fix chaser is a crippled opponent)")
+    ap.add_argument("--role", choices=["evader", "chaser"], default="evader",
+                    help="which side to distil: the evader from the scripted "
+                         "evader, or the chaser from the scripted pursuer "
+                         "(a non-suicidal teacher, the learned chasers die on "
+                         "spikes in 19-43%% of episodes)")
     ap.add_argument("--device", default="cpu")
     args = ap.parse_args()
 
@@ -161,6 +181,7 @@ def main():
     dev = args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu"
     n_envs = args.workers or tp.n_envs
 
+    role = args.role
     rng = np.random.default_rng(tp.seed + 7)
     gen = ArenaGenerator(mp, rng, chaser_frac=ep.chaser_spawn_frac)
     mu = (np.load(os.path.join(args.run, "adv_mu.npy"))
@@ -172,6 +193,38 @@ def main():
     if args.legacy_obs_chaser:
         from dataclasses import replace
         cep = replace(ep, obs_legacy_units=True)
+
+    if role == "chaser":
+        # Learner = chaser, opponent = the scripted evader: a privileged,
+        # strong, non-fleeing target. The learned chasers die on spikes in
+        # 19-43% of episodes, which gives the evader free "wins"; the scripted
+        # pursuer never suicides, so distilling it fixes that source of noise.
+        from .scripted import ScriptedChaser, expert_act_fn
+        env = OriArenaVecEnv("chaser", n_envs, StaticArenaSampler(gen, mu, rng),
+                             mp, ep, seed=tp.seed + 7)
+        env.opp_acts_fn = expert_act_fn(env)     # read per step, not at init
+        ppo = make_ppo(env, tp, tp.seed, dev, role)
+        policy = ppo.policy
+        policy.to(dev)
+        scripts = [ScriptedChaser(mp, ep) for _ in range(n_envs)]
+        print("[dagger] role=chaser, opponent=scripted evader (--ghost ignored)",
+              flush=True)
+        hist = dagger_rounds(env, scripts, policy, rounds=args.rounds,
+                             episodes=args.episodes, epochs=args.epochs,
+                             lr=args.lr, device=dev, max_steps=ep.max_steps,
+                             log=lambda m: print(m, flush=True), role=role)
+        env.close()
+        out_path = os.path.join(args.out, "chaser_init.pt")
+        torch.save(policy.state_dict(), out_path)
+        ppo.save(os.path.join(args.out, "chaser.zip"))
+        import json as _json
+        with open(os.path.join(args.out, "dagger_chaser.json"), "w") as f:
+            _json.dump({"run": args.run, "role": role, "rounds": args.rounds,
+                        "episodes": args.episodes, "epochs": args.epochs,
+                        "history": hist}, f, indent=1)
+        print(f"[dagger] wrote {out_path}")
+        return
+
     chaser = None
     if not args.ghost:
         ck = args.chaser or os.path.join(args.run, "chaser.zip")
@@ -188,21 +241,26 @@ def main():
     env = OriArenaVecEnv("evader", n_envs, StaticArenaSampler(gen, mu, rng), mp, ep,
                          opponent=opp, seed=tp.seed + 7, chaser_ghost=chaser is None,
                          opp_ep=cep)
-    policy = make_ppo(env, tp, tp.seed, dev, "evader").policy
+    ppo = make_ppo(env, tp, tp.seed, dev, role)
+    policy = ppo.policy
     policy.to(dev)
     scripts = [ScriptedEvader(mp, ep) for _ in range(n_envs)]
 
     hist = dagger_rounds(env, scripts, policy, rounds=args.rounds,
                          episodes=args.episodes, epochs=args.epochs, lr=args.lr,
                          device=dev, max_steps=ep.max_steps,
-                         log=lambda m: print(m, flush=True))
+                         log=lambda m: print(m, flush=True), role=role)
     env.close()
 
-    out_path = os.path.join(args.out, "evader_init.pt")
+    stem = "evader"
+    out_path = os.path.join(args.out, f"{stem}_init.pt")
     torch.save(policy.state_dict(), out_path)
+    # also write an SB3 checkpoint so the distilled policy can be entered
+    # straight into hardarena.py as "trained (best)"
+    ppo.save(os.path.join(args.out, f"{stem}.zip"))
     import json
-    with open(os.path.join(args.out, "dagger.json"), "w") as f:
-        json.dump({"run": args.run, "rounds": args.rounds,
+    with open(os.path.join(args.out, f"dagger_{stem}.json"), "w") as f:
+        json.dump({"run": args.run, "role": role, "rounds": args.rounds,
                    "episodes": args.episodes, "epochs": args.epochs,
                    "ghost": args.ghost, "history": hist}, f, indent=1)
     print(f"[dagger] wrote {out_path}")

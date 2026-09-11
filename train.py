@@ -29,6 +29,19 @@ def main():
     ap.add_argument("--quick", action="store_true", help="tiny smoke-test config")
     ap.add_argument("--evader-net", type=str, default=None, help="e.g. 384,384")
     ap.add_argument("--evader-lr", type=float, default=None)
+    ap.add_argument("--init-evader", type=str, default=None,
+                    help="warm-start the evader from a state-dict checkpoint "
+                         "(e.g. results/<dagger_run>/evader_init.pt). PPO then "
+                         "refines an already-competent policy instead of a "
+                         "random init that escapes 0%% of hard arenas.")
+    ap.add_argument("--init-chaser", type=str, default=None,
+                    help="warm-start the chaser from a state-dict checkpoint "
+                         "(e.g. a DAgger distillation of the scripted pursuer, "
+                         "which unlike the learned chasers never kills itself "
+                         "on spikes)")
+    ap.add_argument("--bc-epochs", type=int, default=None,
+                    help="behaviour-cloning epochs at startup (0 = skip; "
+                         "defaults to 0 when --init-evader is given)")
     ap.add_argument("--gap-force-prob", type=float, default=None,
                     help="fraction of training arenas with gap_scale forced high")
     ap.add_argument("--gap-force", type=float, default=None,
@@ -60,6 +73,12 @@ def main():
         tp.evader_net = [int(x) for x in args.evader_net.split(",")]
     if args.evader_lr:
         tp.evader_lr = args.evader_lr
+    if args.init_chaser:
+        tp.init_chaser = args.init_chaser
+    if args.init_evader:
+        tp.init_evader = args.init_evader
+        if args.bc_epochs is None:
+            tp.bc_epochs = 0        # the warm start replaces BC pretraining
     if args.gap_force_prob is not None:
         tp.gap_force_prob = args.gap_force_prob
     if args.gap_force is not None:

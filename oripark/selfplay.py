@@ -290,6 +290,19 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
                              mp, ep, seed=tp.seed + 1)
     evader = make_ppo(boot_ev, tp, tp.seed, device, side="evader")
     chaser = make_ppo(boot_ch, tp, tp.seed + 1, device, side="chaser")
+    # optional warm start (e.g. a DAgger distillation of the scripted expert):
+    # PPO then refines an already-competent policy instead of starting from a
+    # random init that cannot escape at all (measured floor: 0%).
+    init_path = getattr(tp, "init_evader", None)
+    if init_path:
+        evader.policy.load_state_dict(
+            torch.load(init_path, map_location=device, weights_only=True))
+        print(f"[init] evader warm-started from {init_path}", flush=True)
+    init_ch = getattr(tp, "init_chaser", None)
+    if init_ch:
+        chaser.policy.load_state_dict(
+            torch.load(init_ch, map_location=device, weights_only=True))
+        print(f"[init] chaser warm-started from {init_ch}", flush=True)
 
     # league pools (snapshot[0] = random init, used for "before" demos)
     ev_pool = [clone_policy(evader.policy, boot_ev, tp, tp.seed, device, "evader")]
