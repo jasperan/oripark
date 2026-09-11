@@ -160,7 +160,7 @@ def expert_winnable(arenas, mp, ep, max_steps=None, batch=16, mode="calm"):
 
 
 def escape_rate(ev_pol, ch_pol, sampler, mp, ep, n_matches, chaser_stoch: bool,
-                seed: int = 7, opp_ep=None):
+                seed: int = 7, opp_ep=None, scripted_chaser: bool = False):
     """Play `n_matches` episodes and count ALL FIVE endings.
 
     This used to be a fourth copy of the episode loop, and it folded
@@ -174,25 +174,40 @@ def escape_rate(ev_pol, ch_pol, sampler, mp, ep, n_matches, chaser_stoch: bool,
     # identical stochastic draws for every entrant -> policy differences only
     torch.manual_seed(seed)
     np.random.seed(seed)
-    ch = frozen_policy(ch_pol, deterministic=not chaser_stoch)
-    env = OriArenaVecEnv("evader", n_envs, sampler, mp, ep, opponent=ch,
-                         seed=seed, opp_ep=opp_ep)
+    # a FIXED opponent that never changes as policies are retrained: the
+    # privileged scripted pursuer, useful as a stable yardstick and as the
+    # strongest non-learning opponent in the repo
+    kwargs = {}
+    if scripted_chaser:
+        from oripark.selfplay import _scripted_chaser_acts
+        kwargs["opp_acts_fn"] = _scripted_chaser_acts(n_envs, mp, ep)
+        ch = None
+    else:
+        ch = frozen_policy(ch_pol, deterministic=not chaser_stoch)
+        kwargs["opponent"] = ch
+    env = OriArenaVecEnv("evader", n_envs, sampler, mp, ep,
+                         seed=seed, opp_ep=opp_ep, **kwargs)
     return play_episodes(
         env, lambda obs: ev_pol.predict(obs, deterministic=False)[0],
         ep.max_steps, n_matches)
 
 
 def expert_escape_rate(ch_pol, sampler, mp, ep, n_matches, chaser_stoch: bool,
-                       seed: int = 7, opp_ep=None):
+                       seed: int = 7, opp_ep=None, scripted_chaser: bool = False):
     """Scripted-expert escape rate on the same protocol (privileged state)."""
     from oripark.scripted import expert_act_fn
     n_envs = min(n_matches, 32)
     if chaser_stoch:
         torch.manual_seed(seed)
         np.random.seed(seed)
+    kwargs = {}
+    if scripted_chaser:
+        from oripark.selfplay import _scripted_chaser_acts
+        kwargs["opp_acts_fn"] = _scripted_chaser_acts(n_envs, mp, ep)
+    else:
+        kwargs["opponent"] = frozen_policy(ch_pol, deterministic=not chaser_stoch)
     env = OriArenaVecEnv("evader", n_envs, sampler, mp, ep,
-                         opponent=frozen_policy(ch_pol, deterministic=not chaser_stoch),
-                         seed=seed, opp_ep=opp_ep)
+                         seed=seed, opp_ep=opp_ep, **kwargs)
     return play_episodes(env, expert_act_fn(env), ep.max_steps, n_matches)
 
 
@@ -222,6 +237,10 @@ def main():
                          "(all members are fresh inits); mean+min/max "
                          "reported — turns the chaotic-init floor into a "
                          "measured distribution")
+    ap.add_argument("--scripted-chaser", action="store_true",
+                    help="use the privileged scripted pursuer instead of a "
+                         "frozen checkpoint: a fixed yardstick whose strength "
+                         "does not drift as policies are retrained")
     ap.add_argument("--legacy-obs-chaser", action="store_true",
                     help="same, for the frozen chaser checkpoint (pre-fix "
                          "chasers were also trained on the old scaling)")
@@ -257,7 +276,8 @@ def main():
     sampler = HardSampler(gen, args.matches, mp, ep, mix=args.set,
                           oracle=args.oracle)
 
-    ch = load(os.path.join(crun, "chaser.zip"), "chaser", ctp, cmp_, cep)
+    ch = None if args.scripted_chaser else load(
+        os.path.join(crun, "chaser.zip"), "chaser", ctp, cmp_, cep)
 
     from oripark.baselines import find_baseline, find_pool0
     ents = []
@@ -289,12 +309,14 @@ def main():
     for name, path in ents:
         if path == "__expert__":
             r = expert_escape_rate(
-                ch.policy, sampler, mp, ep, args.matches,
-                chaser_stoch=(args.chaser == "stoch"), opp_ep=cep)
+                ch.policy if ch is not None else None, sampler, mp, ep,
+                args.matches, chaser_stoch=(args.chaser == "stoch"),
+                opp_ep=cep, scripted_chaser=args.scripted_chaser)
         else:
             ev = load(path, "evader", tp, mp, ep)
-            r = escape_rate(ev.policy, ch.policy, sampler, mp, ep, args.matches,
-                            chaser_stoch=(args.chaser == "stoch"), opp_ep=cep)
+            r = escape_rate(ev.policy, None, sampler, mp, ep, args.matches,
+                            chaser_stoch=(args.chaser == "stoch"), opp_ep=cep,
+                            scripted_chaser=args.scripted_chaser)
         r["name"] = name
         r["rate"] = r["esc_rate"]
         rows.append(r)
@@ -310,8 +332,9 @@ def main():
             torch.manual_seed(1000 + i)
             ev = make_ppo(env, tp, 1000 + i, "cpu", "evader")
             env.close()
-            r = escape_rate(ev.policy, ch.policy, sampler, mp, ep, args.matches,
-                            chaser_stoch=(args.chaser == "stoch"), opp_ep=cep)
+            r = escape_rate(ev.policy, None, sampler, mp, ep, args.matches,
+                            chaser_stoch=(args.chaser == "stoch"), opp_ep=cep,
+                            scripted_chaser=args.scripted_chaser)
             rates.append(r["esc_rate"])
             print(f"  fresh init #{i:<2}" + _fmt("", r), flush=True)
         rates = np.array(rates)
@@ -325,7 +348,8 @@ def main():
     md = [f"# Hard-arena skill test (`{args.run}`, {mode})",
           "",
           f"{args.matches} matches, stochastic evader, mixed 0.7/0.85 arenas, "
-          f"frozen chaser (`{args.chaser}`), oracle `{args.oracle}` "
+          f"chaser (`{'scripted' if args.scripted_chaser else args.chaser}`), "
+          f"oracle `{args.oracle}` "
           f"({len(sampler.arenas)} arenas), obs "
           f"`{'legacy-32x' if args.legacy_obs else 'fraction'}` / chaser obs "
           f"`{'legacy-32x' if cep.obs_legacy_units else 'fraction'}`.",
