@@ -27,13 +27,16 @@ CH_ACT = spaces.MultiDiscrete([9, 2, 2])         # move, jump, dash
 def _scalars(phys: OriPhysics, si, oi, p: MoveParams, ep: EnvParams,
              t: np.ndarray, extra: dict | None = None) -> np.ndarray:
     """Normalized scalar features for a role view. Returns (N, K)."""
-    t_ = float(p.tile)
-    W, H = p.arena_w, p.arena_h
+    t_ = float(p.tile)  # noqa: F841  (documents the pixel unit of W/H below)
+    W, H = p.arena_w * t_, p.arena_h * t_          # arena size in PIXELS
     xs, ys = phys.x[si], phys.y[si]
     oxs, oys = phys.x[oi], phys.y[oi]
     ovx, ovy = phys.vx[oi], phys.vy[oi]
 
-    orb_dx = np.zeros_like(xs); orb_dy = np.zeros_like(xs); orb_d = np.full_like(xs, 9.0)
+    # sentinel = "no orb in range"; it must read as FAR, not as an orb 9 px
+    # away (the old sentinel was 9 px, which is inside bash_range)
+    orb_d = np.full_like(xs, p.bash_range * 9.0)
+    orb_dx = np.zeros_like(xs); orb_dy = np.zeros_like(xs)
     orbs_s = phys.orbs[si]                    # (N, 8, 2)
     for k in range(8):
         ox = orbs_s[:, k, 0]; oy = orbs_s[:, k, 1]
@@ -48,7 +51,7 @@ def _scalars(phys: OriPhysics, si, oi, p: MoveParams, ep: EnvParams,
     portal_d = np.hypot(ptx - xs, pty - ys)
 
     feats = [
-        xs / (W * t_), ys / (H * t_),
+        xs / W, ys / H,
         phys.vx[si] / p.max_run, phys.vy[si] / 1200.0,
         phys.on_ground[si].astype(np.float32),
         phys.wall_dir[si].astype(np.float32),
@@ -57,8 +60,8 @@ def _scalars(phys: OriPhysics, si, oi, p: MoveParams, ep: EnvParams,
         phys.dash_t[si] / p.dash_time, phys.bash_cd[si] / p.bash_cooldown,
         (oxs - xs) / W, (oys - ys) / H,
         ovx / p.max_run, ovy / 1200.0,
-        orb_dx, orb_dy, np.clip(orb_d / p.bash_range, 0, 9),
-        (ptx - xs) / W, (pty - ys) / H, portal_d / (W * t_),
+        orb_dx, orb_dy, np.clip(orb_d / p.bash_range, 0, 5),  # 5 = far/no orb, inside Box(-5,5)
+        (ptx - xs) / W, (pty - ys) / H, portal_d / W,
         t / ep.max_steps, phys.facing[si],
     ]
     if extra:
@@ -311,6 +314,7 @@ class OriArenaVecEnv(VecEnv):
         portal_before = np.hypot(self.phys.portals[ev, 0] - self.phys.x[ev],
                                  self.phys.portals[ev, 1] - self.phys.y[ev])
 
+        self.phys.last_actions[:] = full    # current-step move/aim channels
         self.phys.press_jump(jump_p)
         self.phys.release_jump(jump_r)
         self.phys.press_dash(dash_p)

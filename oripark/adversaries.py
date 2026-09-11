@@ -106,3 +106,21 @@ class StaticSampler:
 
     def mean_params(self) -> np.ndarray:
         return self.params
+
+
+class FixedListSampler:
+    """Replays an already-generated arena list (identical arenas every call).
+
+    Needed for comparable per-block Elo: re-drawing arenas per block adds
+    arena-sampling noise to the curve.
+    """
+
+    def __init__(self, arenas: list[Arena]):
+        assert arenas, "FixedListSampler needs at least one arena"
+        self.arenas = list(arenas)
+
+    def sample(self, n: int) -> list[Arena]:
+        return [self.arenas[k % len(self.arenas)] for k in range(n)]
+
+    def mean_params(self) -> np.ndarray:
+        return np.asarray(self.arenas[0].params, dtype=np.float32)
