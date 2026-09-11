@@ -314,7 +314,8 @@ def main():
                 opp_ep=cep, scripted_chaser=args.scripted_chaser)
         else:
             ev = load(path, "evader", tp, mp, ep)
-            r = escape_rate(ev.policy, None, sampler, mp, ep, args.matches,
+            r = escape_rate(ev.policy, ch.policy if ch is not None else None,
+                            sampler, mp, ep, args.matches,
                             chaser_stoch=(args.chaser == "stoch"), opp_ep=cep,
                             scripted_chaser=args.scripted_chaser)
         r["name"] = name
@@ -332,7 +333,8 @@ def main():
             torch.manual_seed(1000 + i)
             ev = make_ppo(env, tp, 1000 + i, "cpu", "evader")
             env.close()
-            r = escape_rate(ev.policy, None, sampler, mp, ep, args.matches,
+            r = escape_rate(ev.policy, ch.policy if ch is not None else None,
+                            sampler, mp, ep, args.matches,
                             chaser_stoch=(args.chaser == "stoch"), opp_ep=cep,
                             scripted_chaser=args.scripted_chaser)
             rates.append(r["esc_rate"])
