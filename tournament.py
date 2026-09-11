@@ -103,28 +103,15 @@ def make_arena_set(run_dir, mp, ep, n=24, seed0=4242, combined=False):
 def escape_rate(ev_pol, ch_pol, sampler, mp, ep, matches=40, seed=7,
                 chaser_stoch=False):
     """Stochastic evader vs frozen chaser (argmax or action sampling) on the
-    fixed arena set."""
+    fixed arena set; every finished episode counts in `n`."""
+    from oripark.evals import play_episodes
     env = OriArenaVecEnv("evader", matches, sampler, mp, ep,
                          opponent=frozen_policy(ch_pol, deterministic=not chaser_stoch),
                          seed=seed)
-    obs = env.reset()
-    esc = caught = tm = 0
-    lens = []
-    for _ in range(ep.max_steps):
-        a = ev_pol.predict(obs, deterministic=False)[0]
-        obs, _, done, infos = env.step(a)
-        for info in infos:
-            if "episode" in info:
-                o = info["outcome"]
-                esc += o == "escaped"
-                caught += o == "caught"
-                tm += o == "timeout"
-                lens.append(info["episode"]["l"])
-        if esc + caught + tm >= matches:
-            break
-    env.close()
-    return {"esc": esc, "caught": caught, "tm": tm, "n": esc + caught + tm,
-            "avg_len": float(np.mean(lens)) if lens else 0.0}
+    r = play_episodes(env, lambda obs: ev_pol.predict(obs, deterministic=False)[0],
+                      ep.max_steps, matches)
+    r["avg_len"] = r.pop("length")
+    return r
 
 
 def entrants_for(run_dir, tp, mp, ep, max_checkpoints=8):

@@ -16,7 +16,8 @@ import torch  # noqa: E402
 
 from oripark.adversaries import StaticSampler  # noqa: E402
 from oripark.arena import ArenaGenerator  # noqa: E402
-from oripark.config import EnvParams, MoveParams, TrainParams  # noqa: E402
+from oripark.config import (EnvParams, MoveParams, TrainParams,  # noqa: E402
+                             load_run_params)
 from oripark.render import ReplayRecorder, ascii_frames, make_gif  # noqa: E402
 from oripark.selfplay import make_ppo, set_nets_from_run  # noqa: E402
 
@@ -57,10 +58,8 @@ def main():
     ap.add_argument("--ascii", action="store_true", help="also print an ASCII replay")
     args = ap.parse_args()
 
-    tp = TrainParams()
+    tp, mp, ep = load_run_params(args.run)      # replay under the run's own physics/env
     set_nets_from_run(tp, args.run)
-    mp = MoveParams()
-    ep = EnvParams()
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     rng = np.random.default_rng(0)

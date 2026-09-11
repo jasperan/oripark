@@ -19,7 +19,7 @@ import torch  # noqa: E402
 from stable_baselines3 import PPO  # noqa: E402
 
 from oripark.arena import Arena, ArenaGenerator  # noqa: E402
-from oripark.config import EnvParams, MoveParams, TrainParams  # noqa: E402
+from oripark.config import EnvParams, MoveParams, TrainParams, load_run_params  # noqa: E402
 from oripark.env import OriArenaVecEnv  # noqa: E402
 from oripark.selfplay import frozen_policy, make_ppo, set_nets_from_run  # noqa: E402
 
@@ -56,30 +56,12 @@ class FixedArenaSampler:
 
 
 def run_eval(ev_pol, ch_pol, sampler, mp, ep, n_envs, seed=7) -> dict:
+    """Fixed-arena eval; every finished episode counts (see oripark.evals)."""
+    from oripark.evals import play_episodes
     env = OriArenaVecEnv("evader", n_envs, sampler, mp, ep,
                          opponent=frozen_policy(ch_pol, deterministic=True), seed=seed)
-    obs = env.reset()
-    esc = caught = tm = 0
-    zones, lens = [], []
-    for _ in range(ep.max_steps):
-        a = ev_pol.predict(obs, deterministic=False)[0]
-        obs, _, done, infos = env.step(a)
-        for info in infos:
-            if "episode" in info:
-                o = info["outcome"]
-                zones.append(info["ev_max_zone"])
-                lens.append(info["episode"]["l"])
-                esc += o == "escaped"
-                caught += o == "caught"
-                tm += o == "timeout"
-        if esc + caught + tm >= n_envs:
-            break
-    env.close()
-    n = esc + caught + tm
-    return {"esc": esc, "n": n, "caught": caught,
-            "esc_rate": esc / max(n, 1),
-            "zone": float(np.mean(zones)) if zones else 0.0,
-            "length": float(np.mean(lens)) if lens else 0.0}
+    return play_episodes(env, lambda obs: ev_pol.predict(obs, deterministic=False)[0],
+                         ep.max_steps, n_envs)
 
 
 def main():
@@ -89,7 +71,7 @@ def main():
     ap.add_argument("--arena-seeds", type=int, default=24, help="fixed arena count")
     args = ap.parse_args()
 
-    tp, mp, ep = TrainParams(), MoveParams(), EnvParams()
+    tp, mp, ep = load_run_params(args.run)      # never re-measure under today's defaults
     set_nets_from_run(tp, args.run)
     rng = np.random.default_rng(1)
     gen = ArenaGenerator(mp, rng, chaser_frac=ep.chaser_spawn_frac)
@@ -133,7 +115,7 @@ def main():
     for block, label, r in rows:
         md.append(f"| {label} | {r['esc_rate']:.0%} | {r['caught']} | {r['zone']:.1f} | {r['length']:.0f} |")
     if len(rows) >= 2:
-        b, t = rows[0][2], rows[-1][2]
+        b = rows[0][0]
         md += ["", f"**Total improvement (block {b} → {rows[-1][1]}):** "
                    f"escape {rows[0][2]['esc_rate']:.0%} → {rows[-1][2]['esc_rate']:.0%} "
                    f"(+{rows[-1][2]['esc_rate'] - rows[0][2]['esc_rate']:.0%}), "
