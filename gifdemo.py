@@ -90,7 +90,14 @@ def main():
 
     ch, gen = load(os.path.join(args.run, "chaser.zip"), "chaser", tp, mp, ep, mu)
     ev, _ = load(os.path.join(args.run, "evader.zip"), "evader", tp, mp, ep, mu)
-    base, _ = load(os.path.join(args.run, "evader_init.pt"), "evader", tp, mp, ep, mu)
+    # the "before" policy: the true pre-training checkpoint, not pool_ev_0.pt
+    # (which is an early TRAINED pool snapshot -- see oripark/baselines.py)
+    from oripark.baselines import find_baseline
+    base_path, base_label = find_baseline(args.run)
+    if base_path is None:
+        base_path, base_label = os.path.join(args.run, "evader_init.pt"), "init"
+    base, _ = load(base_path, "evader", tp, mp, ep, mu)
+    print(f"before-panel policy: {base_label} ({base_path})", flush=True)
 
     # ---- scan candidates with the trained evader, recording frames
     chosen_frames = None
@@ -117,13 +124,14 @@ def main():
     torch.manual_seed(2000)
     np.random.seed(2000)
     un_fr, un_out, un_ln = record(a, base.policy, ch.policy, mp, ep, args.max_steps)
-    print(f"untrained: {un_out} (len {un_ln})")
+    print(f"before: {un_out} (len {un_ln})")
 
     stem = os.path.splitext(args.out)[0]
     p1 = f"{stem}_untrained_{un_out}.gif"
     p2 = f"{stem}_trained_{tr_out}.gif"
-    make_gif(un_fr, a, mp, p1, label="UNTRAINED", scale=args.scale, fps=args.fps)
-    make_gif(tr_fr, a, mp, p2, label="TRAINED", scale=args.scale, fps=args.fps)
+    make_gif(un_fr, a, mp, p1, label=f"BEFORE ({base_label})", scale=args.scale,
+             fps=args.fps)
+    make_gif(tr_fr, a, mp, p2, label="AFTER (trained)", scale=args.scale, fps=args.fps)
     print(f"wrote {p1}\nwrote {p2}")
 
     # side-by-side
