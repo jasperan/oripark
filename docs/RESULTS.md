@@ -1,5 +1,33 @@
 # Results
 
+> ## ⚠️ RETRACTED — see [VERIFICATION.md](VERIFICATION.md)
+>
+> The numbers on this page were produced with a movement bug (`wall_dir` was
+> never cleared and wall climb/jump/slide never tested for real wall contact,
+> so agents could climb in mid-air) and with a broken arena oracle (it ran the
+> scripted expert in permanent panic mode, admitting 90/600 hard arenas
+> instead of 310/600). They are kept for provenance only.
+>
+> Corrected measurement — fixed physics, 310 expert-winnable arenas,
+> stochastic frozen chaser, 100 seeded matches, identical draws per entrant:
+>
+> | entrant | escape | survival | caught | ev_hazard | ch_hazard | mean zone |
+> |---|---:|---:|---:|---:|---:|---:|
+> | scripted expert | 56% | 66% | 34 | 0 | 10 | 12.7 |
+> | run17 trained | 38% | 59% | 8 | 33 | 21 | 10.6 |
+> | run19 trained | 33% | 57% | 9 | 27 | 31 | 10.0 |
+> | run20 trained | 30% | 62% | 27 | 18 | 25 | 11.0 |
+> | random init | 37% | 59% | 7 | 34 | 22 | 10.2 |
+> | BC-pretrained | 1-4% | 58% | 4 | 35 | 48 | 5.9 |
+>
+> The 3x3 matrix below (44%/31%/57%) reproduces exactly — **under the buggy
+> physics**. With flight removed the same A/B drops run19 44% → 20% and run20
+> 57% → 35%, which is why the architecture gain (E14/E15) is retracted: run19
+> relied on the exploit ~2.4x more than run17 and ends up below it.
+> The "random floor is 4-8%, trained beats it by +27..+49" claim is also a
+> property of the old arena filter: on the corrected arena set a random init
+> escapes ~37% and the pre-fix trained policies are at the same level.
+
 ## The skill metric (reproducible)
 
 `python hardarena.py --run results/runN --matches 100 --chaser stoch --set 07`

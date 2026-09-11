@@ -1,5 +1,11 @@
 # Experiments log
 
+> **E14, E15 and E16 are retracted** — see [E17](#e17--verification-pass-fixes-physics-oracle-and-the-metric-retracts-e14e15e16)
+> and [VERIFICATION.md](VERIFICATION.md). They were measured under a movement
+> bug that let agents climb in mid-air and with an arena oracle that tested a
+> panicking expert, and every headline number they report reproduces only under
+> that bug. E17 records the fixes and the first legitimate training run.
+
 Running log of improvement experiments (hypothesis → change → measured
 result). The goal: a professional-grade evader that reliably reaches the
 portal.
@@ -231,3 +237,66 @@ portal.
 - **Retraction**: the "chaos is strong — random escapes 17-27%" framing
   in earlier docs (E13, Round-4 tuning) measured a single lucky draw per
   run, not the floor. Single-init baselines are retired from the metric.
+
+
+## E17 — verification pass: fixes physics, oracle and the metric; retracts E14/E15/E16
+
+**Hypothesis**: the published improvement runs (E14/E15) measure movement
+skill. **Method**: re-run every claim from a clean checkout — pytest-style
+probes, an A/B harness over two physics builds with identical seeded draws,
+and a re-evaluation of the saved policies.
+
+**Three defects, all fixed and regression-tested:**
+
+1. **Free flight (physics).** `wall_dir` was written on a leading-edge
+   collision and cleared only by a probe requiring `|vx| < 1e-3`, and wall
+   climb / wall jump / wall slide never tested for contact — so an airborne
+   agent holding that direction rose at `climb_speed` (170 px/s) anywhere.
+   A probe climbed with the nearest solid tile 99 tiles away; a trained run19
+   evader did it for 9,856 steps across 40 environments. Fix: `_wall_contact()`
+   re-derives the wall side from head/centre/feet probes every substep.
+   *A/B, one shared arena set, 100 seeded matches, identical draws:*
+   run17 31%→26%, **run19 44%→20%**, run19-vs-own 38%→26%, **run20 57%→35%**.
+
+2. **Panic-mode oracle (arena filter).** `expert_winnable()` fed the scripted
+   expert its own position as `chaser_x/chaser_y`, pinning `flee=True` for the
+   whole episode, while a random chaser wandered the test arena. The documented
+   "an arena only counts if a competent player can win it" admitted 90/600
+   hard arenas, not ~half. Fix: `--oracle calm` parks the chaser and feeds the
+   real position → 310/600.
+
+3. **Metric denominators.** The metric tool (`hardarena.py`) had a fourth copy
+   of the episode loop and computed `tm = n - escaped - caught`, so both hazard
+   outcomes were reported as "timeout", and it printed `esc/args.matches`
+   beside a rate computed over `esc/n_done`. Fix: every entrant now goes
+   through `oripark.evals.play_episodes`, artifacts carry five outcome columns
+   that sum to `n`, plus `survival` and `mean zone`.
+
+**Measured result (corrected protocol — fixed physics, 310 calm-oracle arenas,
+stochastic frozen chaser, 100 seeded matches):**
+
+| entrant | escape | survival | ev_hazard | mean zone |
+|---|---:|---:|---:|---:|
+| scripted expert (privileged) | 56% | 66% | 0 | 12.7 |
+| run17 trained | 38% | 59% | 33 | 10.6 |
+| run19 trained | 33% | 57% | 27 | 10.0 |
+| run20 trained | 30% | 62% | 18 | 11.0 |
+| random init | 37% | 59% | 34 | 10.2 |
+| BC-pretrained | 1-4% | 58% | 35 | 5.9 |
+
+**Retractions.** E14's "+13 pt architectural gain" and E15's "the gain
+generalizes" do not survive: run19 depended on the exploit ~2.4x more than
+run17 and lands *below* it. E16's "random floor is 4-8%, trained beats it by
++27 to +49" is a property of the old oracle: on the corrected arena set a
+random init escapes ~37%, i.e. the pre-fix trained policies are at
+random-init level. Also retracted as unsupported: the BC NLL 0.15 figure
+(nothing persists it), the run19 peak Elo (actual 1364.2 @ b63, not 1352 @
+b61), the run20 matrix cell (artifact says 57%, docs said 54%), and
+`selected.txt`'s protocol lines (hand-written; `select.py` cannot emit them).
+
+**New bottleneck.** The frozen chasers now catch only 7-27% of episodes —
+they were trained against evaders that could fly. Escape rates are therefore
+partly "can you avoid the spikes and drift to the portal", and the honest
+opponent is a chaser retrained under fixed physics. `run21_fixed` is that run
+(run19's exact recipe, 300 blocks, seed 3, fixed physics); its results are
+appended below when it completes.

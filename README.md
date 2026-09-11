@@ -6,25 +6,41 @@ trained by a **self-play league of two adversarial neural-network policies**
 (an agile evader vs a pursuer), with a **third adversarial learner** (a CEM
 level generator) that keeps the curriculum at the edge of the agents' skill.
 
-> **Untrained vs trained evader, same arena, same chaser** (untrained
-> wanders and times out; the trained evader escapes through the light
-> portal in ~4 seconds):
+> **Untrained vs trained evader, same arena, same frozen chaser** (the
+> trained clip escapes through the portal, the untrained one impales itself):
 >
-> ![improvement](docs/media/evader_improvement.gif) *(trained evader, run19 b270 — escapes; untrained flails)*
+> ![improvement](docs/media/evader_improvement.gif)
 >
-> Trained-evader escape rate vs **frozen stochastic chasers** on
-> expert-winnable hard arenas (100 matches, seeded draws, cross-chaser
-> matrix, reproducible protocol in `hardarena.py`): **run19 trained
-> escapes 44% vs run17's chaser (old arch: 31%), 62% vs the weakest
-> chaser** — and the true random floor, measured as a K=6 population, is
-> **4-8%, not the 17-45% single lucky inits suggested**. See
-> [docs/RESULTS.md](docs/RESULTS.md), the
-> [progress curve](docs/media/progress_curve_v4.png), and the
-> [tournament with recorded videos](docs/tournament.md).
+> ### Measurement status — read [docs/VERIFICATION.md](docs/VERIFICATION.md)
 >
-> The renderer is painterly Ori-style: warm god-light sky, parallax
-> foliage, grass-topped terrain, glowing orbs/portal, luminous spirit
-> agents, drifting fireflies and a soft vignette.
+> A full verification pass over this repo re-ran every claim and found a
+> movement bug: `wall_dir` was never cleared and wall
+> climb/jump/slide never tested for actual wall contact, so agents could climb
+> at 170 px/s **in mid-air** anywhere on the map. The earlier headline results
+> are retracted. Measured on the corrected protocol — fixed physics, 310
+> expert-winnable hard arenas, stochastic frozen chaser, 100 seeded matches,
+> identical draws for every entrant:
+>
+> | entrant | escape | survival (not caught / not impaled) | mean zone of 12 |
+> |---|---:|---:|---:|
+> | scripted expert (privileged state) | **56%** | 66% | 12.7 |
+> | run17 trained (old arch) | 38% | 59% | 10.6 |
+> | run19 trained (new arch) | 33% | 57% | 10.0 |
+> | run20 trained (new arch) | 30% | 62% | 11.0 |
+> | random init | 37% | 59% | 10.2 |
+> | BC-pretrained | 1–4% | 58% | 5.9 |
+>
+> So the pre-fix training runs **do not beat a random init** once free flight
+> is removed, and roughly a third of their episodes end on spikes. `run21_fixed`
+> is the first legitimate training run (same recipe as run19, fixed physics).
+> Reproduce any row with:
+> `python hardarena.py --run results/run17 --chaser-run results/run17 --matches 100 --chaser stoch --set 07 --expert`
+>
+> The renderer is painterly Ori-style: blurred god-light, a vine-hung canopy,
+> parallax hills, moss-capped rock with drop shadows, glowing orbs, a gate
+> portal with a light column, luminous spirit agents with comet trails,
+> drifting fireflies, and a HUD with portal progress and an end-of-clip
+> outcome banner.
 
 ```
               ┌─────────────────────────────────────────────────┐
