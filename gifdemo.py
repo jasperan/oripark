@@ -19,7 +19,7 @@ from oripark.config import (EnvParams, MoveParams, TrainParams,
                              load_run_params)  # noqa: E402
 from oripark.env import OriArenaVecEnv  # noqa: E402
 from oripark.selfplay import frozen_policy, make_ppo, set_nets_from_run  # noqa: E402
-from oripark.render import make_gif  # noqa: E402
+from oripark.render import ReplayRecorder, make_gif  # noqa: E402
 
 
 def load(path, role, tp, mp, ep, mu):
@@ -56,31 +56,17 @@ class One:
 
 
 def record(arena, ev_pol, ch_pol, mp, ep, max_steps):
-    """Record a full stochastic replay; returns (frames, outcome, length)."""
-    env = OriArenaVecEnv("evader", 1, One(arena), mp, ep,
-                         opponent=frozen_policy(ch_pol, deterministic=True), seed=7)
-    obs = env.reset()
-    frames = []
-    ph = env.phys
-    outcome, ln = "timeout", max_steps
-    for t in range(max_steps):
-        a = ev_pol.predict(obs, deterministic=False)[0]
-        obs, _, done, infos = env.step(a)
-        frames.append({
-            "t": t,
-            "ev": (float(ph.x[0]), float(ph.y[0])),
-            "ch": (float(ph.x[1]), float(ph.y[1])),
-            "ev_act": env.prev_full[0].copy(),
-            "ch_act": env.prev_full[1].copy(),
-            "ev_agg": env.ev_agg[0].copy(),
-            "ch_agg": env.ch_agg[0].copy(),
-        })
-        if done[0] and "episode" in infos[0]:
-            outcome = infos[0]["outcome"]
-            ln = infos[0]["episode"]["l"]
-            break
-    env.close()
-    return frames, outcome, ln
+    """Record a full stochastic replay; returns (frames, outcome, length).
+
+    Thin wrapper over oripark.render.ReplayRecorder so the GIF tools and the
+    renderer cannot drift apart. (This file used to carry its own copy of the
+    loop, which appended the frame AFTER the env's auto-reset — every clip
+    therefore ended on the respawned agent instead of the escape.)
+    """
+    rec = ReplayRecorder(arena, ev_pol, ch_pol, mp, ep, deterministic=False, seed=7)
+    frames, outcome = rec.run(max_steps)
+    rec.close()
+    return frames, outcome, len(frames)
 
 
 def main():
