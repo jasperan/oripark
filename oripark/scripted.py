@@ -486,9 +486,13 @@ def collect_demos(env, scripted, n_episodes: int, max_steps: int,
                                chaser_x=cx, chaser_y=cy))
         acts = np.stack(acts)
         total_waves += 1
+        pre_obs = obs          # the state the action was chosen in
         obs, _, done, infos = env.step(acts)
         for i in range(N):
-            ep_obs[i].append(obs[i])
+            # labels must be aligned with the observation they answer: this
+            # used to append the POST-step obs, i.e. every (obs, act) pair was
+            # off by one step
+            ep_obs[i].append(pre_obs[i])
             ep_act[i].append(acts[i])
             ep_steps[i] += 1
             if done[i] or ep_steps[i] >= max_steps:
