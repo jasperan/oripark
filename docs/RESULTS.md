@@ -1,32 +1,64 @@
 # Results
 
-> ## ⚠️ RETRACTED — see [VERIFICATION.md](VERIFICATION.md)
->
-> The numbers on this page were produced with a movement bug (`wall_dir` was
-> never cleared and wall climb/jump/slide never tested for real wall contact,
-> so agents could climb in mid-air) and with a broken arena oracle (it ran the
-> scripted expert in permanent panic mode, admitting 90/600 hard arenas
-> instead of 310/600). They are kept for provenance only.
->
-> Corrected measurement — fixed physics, 310 expert-winnable arenas,
-> stochastic frozen chaser, 100 seeded matches, identical draws per entrant:
->
-> | entrant | escape | survival | caught | ev_hazard | ch_hazard | mean zone |
-> |---|---:|---:|---:|---:|---:|---:|
-> | scripted expert | 56% | 66% | 34 | 0 | 10 | 12.7 |
-> | run17 trained | 38% | 59% | 8 | 33 | 21 | 10.6 |
-> | run19 trained | 33% | 57% | 9 | 27 | 31 | 10.0 |
-> | run20 trained | 30% | 62% | 27 | 18 | 25 | 11.0 |
-> | random init | 37% | 59% | 7 | 34 | 22 | 10.2 |
-> | BC-pretrained | 1-4% | 58% | 4 | 35 | 48 | 5.9 |
->
-> The 3x3 matrix below (44%/31%/57%) reproduces exactly — **under the buggy
-> physics**. With flight removed the same A/B drops run19 44% → 20% and run20
-> 57% → 35%, which is why the architecture gain (E14/E15) is retracted: run19
-> relied on the exploit ~2.4x more than run17 and ends up below it.
-> The "random floor is 4-8%, trained beats it by +27..+49" claim is also a
-> property of the old arena filter: on the corrected arena set a random init
-> escapes ~37% and the pre-fix trained policies are at the same level.
+## Verified results (this is the table to trust)
+
+Protocol: fixed physics, 310 expert-winnable hard arenas (calm oracle),
+stochastic frozen chaser, 100 seeded matches, identical draws per entrant, and
+**each policy fed the observation convention it was trained in**
+(`--legacy-obs` / `--legacy-obs-chaser`). The opponent for the cross-run
+columns is `run21_fixed`'s chaser — the only pursuer in this repo trained under
+fixed physics against an evader that cannot fly.
+
+| evader | vs run21 chaser | vs run17 chaser | zone | caught | ev_hazard | ch_hazard |
+|---|---:|---:|---:|---:|---:|---:|
+| scripted expert (privileged BFS, no NN) | **54.5%** | 27.7% | 10.5 | 18 | 1 | 27 |
+| **run21 trained** (fixed physics, 300 blocks) | **40%** | **41%** | 10.1 | 30 | 11 | 19 |
+| run21 early pool snapshot | 42% | 37% | 9.9 | 29 | 6 | 23 |
+| run17 trained (old arch, pre-fix physics) | 29% | 21% | 8.3 | 12 | 30 | 29 |
+| run19 trained (new arch, pre-fix physics) | 29% | 14% | 8.2 | 24 | 17 | 30 |
+| run20 trained (new arch, pre-fix physics) | 30% | 15% | 8.0 | 28 | 10 | 32 |
+| DAgger distillation of the expert (no PPO) | 29% | — | 8.8 | 28 | 22 | 21 |
+| BC / init policy (per run) | 7-19% | 0-17% | 5.8-7.9 | 31-36 | 18-40 | 22-37 |
+| **fresh random init** | **0%** (5/5 inits, 500 episodes) | — | ~2 | — | — | — |
+
+Read:
+
+1. **Learning works, and it is large.** A fresh random init escapes 0% of hard
+   arenas; after 300 self-play blocks the fixed-physics run reaches 40%
+   (run21). That is the project's core claim, and it survives every correction
+   below.
+2. **The fixed-physics retrain is the strongest policy here.** run21 scores
+   40% against its own chaser and 41% against run17's — it is chaser-robust —
+   while the scripted expert swings from 27.7% to 54.5% depending on the
+   opponent. Against run17's chaser the learned policy actually beats the
+   expert.
+3. **The pre-fix runs are weaker than published, but not worthless.** On the
+   same opponent they land at 29-30%, ahead of a random init (0%) and behind
+   run21 (40%). Their published 44%/57% came from free flight plus a chaser
+   that was fed the wrong observation convention.
+4. **Distillation beats cloning by a wide margin.** Distilling the expert with
+   DAgger (student rollouts, expert labels) reaches 29% in ~20 minutes with no
+   RL at all, where plain behaviour cloning of the same expert lands at 7-19%.
+
+## Retraction notice for the tables below
+
+Everything from "The skill metric" onward was produced **before** this audit
+and is kept for provenance. Three defects invalidate those numbers:
+
+* **Free flight** — `wall_dir` was never cleared and wall climb/jump/slide
+  never tested for wall contact, so agents could climb at 170 px/s in mid-air.
+  With the same seeded draws, fixing it drops run19 44% → 20% and run20
+  57% → 35% on a shared arena set.
+* **Panic-mode oracle** — the arena filter handed the scripted expert its own
+  position as the chaser, pinning `flee=True`; it admitted 90/600 arenas
+  instead of 310/600.
+* **Mislabeled baselines** — every "random"/"untrained" row loaded
+  `pool_ev_0.pt`, which is the oldest *surviving trained* pool snapshot (the
+  league trims its pool with `pop(0)`), not an init. So the "chaos is strong"
+  story (E13/E16) was measuring an early trained policy, and the "true floor"
+  numbers were built with a trained policy as member 0.
+
+Details, evidence and reproduction commands: [VERIFICATION.md](VERIFICATION.md).
 
 ## The skill metric (reproducible)
 
