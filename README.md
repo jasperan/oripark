@@ -48,7 +48,10 @@ level generator) that keeps the curriculum at the edge of the agents' skill.
 > parallax hills, moss-capped rock with drop shadows, glowing orbs, a gate
 > portal with a light column, luminous spirit agents with comet trails,
 > drifting fireflies, and a HUD with portal progress and an end-of-clip
-> outcome banner.
+> outcome banner. All clips are labelled with the policy they actually show
+> (the old "UNTRAINED" panel was an early *trained* pool snapshot) and end on
+> the outcome: see
+> [renderer before/after](docs/media/render_before_after.png).
 
 ```
               ┌─────────────────────────────────────────────────┐
