@@ -28,6 +28,7 @@ from oripark.arena import ArenaGenerator  # noqa: E402
 from oripark.config import (EnvParams, MoveParams, TrainParams,
                              load_run_params)  # noqa: E402
 from oripark.env import OriArenaVecEnv  # noqa: E402
+from oripark.evals import play_episodes  # noqa: E402
 from oripark.selfplay import frozen_policy, make_ppo, set_nets_from_run  # noqa: E402
 
 
@@ -160,39 +161,31 @@ def expert_winnable(arenas, mp, ep, max_steps=None, batch=16, mode="calm"):
 
 def escape_rate(ev_pol, ch_pol, sampler, mp, ep, n_matches, chaser_stoch: bool,
                 seed: int = 7, opp_ep=None):
+    """Play `n_matches` episodes and count ALL FIVE endings.
+
+    This used to be a fourth copy of the episode loop, and it folded
+    `ev_hazard` (evader impaled itself) and `ch_hazard` (chaser did) into the
+    "timeout" column: a policy that killed itself on spikes was reported as
+    surviving to the step limit. It also printed the escape count against
+    `args.matches` while dividing by the finished-episode count, so the
+    denominator in the artifact disagreed with the one in the arithmetic.
+    """
     n_envs = min(n_matches, 32)
     # identical stochastic draws for every entrant -> policy differences only
-    import torch as _torch
-    _torch.manual_seed(seed)
+    torch.manual_seed(seed)
     np.random.seed(seed)
     ch = frozen_policy(ch_pol, deterministic=not chaser_stoch)
     env = OriArenaVecEnv("evader", n_envs, sampler, mp, ep, opponent=ch,
                          seed=seed, opp_ep=opp_ep)
-    obs = env.reset()
-    esc = caught = n_done = 0
-    lens = []
-    for _ in range(ep.max_steps):
-        a = ev_pol.predict(obs, deterministic=False)[0]
-        obs, _, done, infos = env.step(a)
-        for info in infos:
-            if "episode" in info:
-                o = info["outcome"]
-                n_done += 1
-                esc += o == "escaped"
-                caught += o == "caught"
-                lens.append(info["episode"]["l"])
-        if n_done >= n_matches:
-            break
-    env.close()
-    return esc / max(n_done, 1), esc, caught, n_done - esc - caught, \
-        float(np.mean(lens)) if lens else 0.0
+    return play_episodes(
+        env, lambda obs: ev_pol.predict(obs, deterministic=False)[0],
+        ep.max_steps, n_matches)
 
 
 def expert_escape_rate(ch_pol, sampler, mp, ep, n_matches, chaser_stoch: bool,
                        seed: int = 7, opp_ep=None):
     """Scripted-expert escape rate on the same protocol (privileged state)."""
     from oripark.scripted import expert_act_fn
-    from oripark.evals import play_episodes
     n_envs = min(n_matches, 32)
     if chaser_stoch:
         torch.manual_seed(seed)
@@ -200,8 +193,14 @@ def expert_escape_rate(ch_pol, sampler, mp, ep, n_matches, chaser_stoch: bool,
     env = OriArenaVecEnv("evader", n_envs, sampler, mp, ep,
                          opponent=frozen_policy(ch_pol, deterministic=not chaser_stoch),
                          seed=seed, opp_ep=opp_ep)
-    r = play_episodes(env, expert_act_fn(env), ep.max_steps, n_matches)
-    return (r["esc_rate"], r["esc"], r["caught"], r["tm"], r["length"])
+    return play_episodes(env, expert_act_fn(env), ep.max_steps, n_matches)
+
+
+def _fmt(name: str, r: dict) -> str:
+    return (f"  {name:<18} escape {r['esc_rate']:6.1%} ({r['esc']:>3}/{r['n']:<3}) "
+            f"caught {r['caught']:>3} timeout {r['tm']:>3} "
+            f"ev_hazard {r['ev_hazard']:>3} ch_hazard {r['ch_hazard']:>3} "
+            f"zone {r['zone']:5.1f} len {r['length']:4.0f}")
 
 
 def main():
@@ -270,7 +269,7 @@ def main():
     rows = []
     for name, path in ents:
         if name == "random" and args.random_seeds > 1:
-            rates, notes = [], []
+            rates = []
             for i in range(args.random_seeds):
                 if i == 0:
                     ev = load(path, "evader", tp, mp, ep)
@@ -280,54 +279,54 @@ def main():
                     torch.manual_seed(1000 + i)
                     ev = make_ppo(env, tp, 1000 + i, "cpu", "evader")
                     env.close()
-                rate, esc, caught, tm, length = escape_rate(
-                    ev.policy, ch.policy, sampler, mp, ep, args.matches,
-                    chaser_stoch=(args.chaser == "stoch"), opp_ep=cep)
-                rates.append(rate)
-                notes.append((rate, esc, caught, tm, length))
-                print(f"  random init #{i:<2}      escape {rate:.1%} "
-                      f"({esc}/{args.matches}) caught {caught} tm {tm} "
-                      f"len {length:.0f}", flush=True)
+                r = escape_rate(ev.policy, ch.policy, sampler, mp, ep,
+                                args.matches,
+                                chaser_stoch=(args.chaser == "stoch"), opp_ep=cep)
+                rates.append(r["esc_rate"])
+                print(f"  random init #{i:<2}" + _fmt("", r), flush=True)
             rates = np.array(rates)
-            mean = rates.mean()
-            rows.append((f"random pop (K={args.random_seeds})",
-                         mean, int(rates.sum() * 0), 0, 0, 0))
-            rows.append((f"  min init", rates.min(), 0, 0, 0, 0))
-            rows.append((f"  max init", rates.max(), 0, 0, 0, 0))
-            print(f"  random population K={args.random_seeds}: mean {mean:.1%} "
-                  f"min {rates.min():.1%} max {rates.max():.1%}", flush=True)
+            rows.append({"name": f"random pop (K={args.random_seeds})",
+                         "rate": float(rates.mean()), "pop": True})
+            print(f"  random population K={args.random_seeds}: mean {rates.mean():.1%} "
+                  f"min {rates.min():.1%} max {rates.max():.1%} "
+                  f"spread {rates.max() - rates.min():.1%}", flush=True)
             continue
         if path == "__expert__":
-            rate, esc, caught, tm, length = expert_escape_rate(
+            r = expert_escape_rate(
                 ch.policy, sampler, mp, ep, args.matches,
                 chaser_stoch=(args.chaser == "stoch"), opp_ep=cep)
-            rows.append((name, rate, esc, caught, tm, length))
-            print(f"  {name:<18} escape {rate:.1%} ({esc}/{args.matches}) "
-                  f"caught {caught} tm {tm} len {length:.0f}", flush=True)
-            continue
-        ev = load(path, "evader", tp, mp, ep)
-        rate, esc, caught, tm, length = escape_rate(
-            ev.policy, ch.policy, sampler, mp, ep, args.matches,
-            chaser_stoch=(args.chaser == "stoch"), opp_ep=cep)
-        rows.append((name, rate, esc, caught, tm, length))
-        print(f"  {name:<18} escape {rate:.1%} ({esc}/{args.matches}) "
-              f"caught {caught} tm {tm} len {length:.0f}", flush=True)
+        else:
+            ev = load(path, "evader", tp, mp, ep)
+            r = escape_rate(ev.policy, ch.policy, sampler, mp, ep, args.matches,
+                            chaser_stoch=(args.chaser == "stoch"), opp_ep=cep)
+        r["name"] = name
+        r["rate"] = r["esc_rate"]
+        rows.append(r)
+        print(_fmt(name, r), flush=True)
 
     md = [f"# Hard-arena skill test (`{args.run}`, {mode})",
           "",
           f"{args.matches} matches, stochastic evader, mixed 0.7/0.85 arenas, "
-          f"frozen chaser (`{args.chaser}`).",
+          f"frozen chaser (`{args.chaser}`), oracle `{args.oracle}` "
+          f"({len(sampler.arenas)} arenas).",
           "",
-          "| policy | escape rate | caught | timeout | avg len |",
-          "|---|---:|---:|---:|---:|"]
-    for name, rate, esc, caught, tm, length in sorted(rows, key=lambda r: -r[1]):
-        if name.startswith("random pop"):
-            md.append(f"| {name} | {rate:.1%} (mean of K) | — | — | — |")
-        elif name.startswith("  min") or name.startswith("  max"):
+          "| policy | escape rate | escaped | caught | timeout | ev_hazard | "
+          "ch_hazard | mean zone | avg len |",
+          "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    for r in sorted(rows, key=lambda r: -r["rate"]):
+        if r.get("pop"):
+            md.append(f"| {r['name']} | {r['rate']:.1%} (mean of K) | — | — | — "
+                      "| — | — | — | — |")
             continue
-        else:
-            md.append(f"| {name} | {rate:.1%} ({esc}/{args.matches}) | {caught} | {tm} | {length:.0f} |")
-    md += ["", "Caveat: a deterministic frozen chaser is partly exploitable by chaos;",
+        md.append(f"| {r['name']} | {r['rate']:.1%} ({r['esc']}/{r['n']}) "
+                  f"| {r['esc']} | {r['caught']} | {r['tm']} | {r['ev_hazard']} "
+                  f"| {r['ch_hazard']} | {r['zone']:.1f} | {r['length']:.0f} |")
+    md += ["",
+           "`mean zone` = mean furthest arena zone (of 12) the evader reached;",
+           "it discriminates policies that survive to the timestep limit without",
+           "reaching the portal. Every finished episode counts in the escape-rate",
+           "denominator, including both hazard endings.",
+           "", "Caveat: a deterministic frozen chaser is partly exploitable by chaos;",
            "the stochastic-chaser number is the honest one."]
     out = args.out or os.path.join(args.run, f"hardarena_{args.chaser}.md")
     with open(out, "w") as f:

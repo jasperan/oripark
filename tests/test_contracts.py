@@ -7,9 +7,13 @@ escape-rate denominator.
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
-from oripark.arena import Arena
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+from oripark.arena import Arena  # noqa: E402
 from oripark.env import OriArenaVecEnv
 from oripark.metrics import Elo, elo_pair_update
 from oripark.physics import ORB, PORTAL, SOLID
@@ -194,3 +198,67 @@ def test_oracle_calm_filter_is_not_panic_mode(mp, ep):
         f"calm oracle ({len(calm)}) should accept more arenas than the "
         f"panic-mode filter ({len(panic)})")
     assert len(calm) >= 8, f"calm oracle accepted only {len(calm)}/48 arenas"
+
+
+# ------------------------------------------------------- metric accounting
+class _OutcomeEnv:
+    """Stub vec-env that emits one episode per step, cycling the outcomes."""
+
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.i = 0
+        self.closed = False
+
+    def reset(self):
+        return None
+
+    def step(self, _a):
+        import numpy as np
+        o = self.outcomes[self.i % len(self.outcomes)]
+        self.i += 1
+        info = {"episode": {"l": 100}, "outcome": o, "ev_max_zone": 3}
+        return None, np.zeros(1), np.array([True]), [info]
+
+    def close(self):
+        self.closed = True
+
+
+def test_play_episodes_counts_every_outcome():
+    """Hazard endings must not be folded into `timeout` (they used to be, in
+    three separate copies of this loop — including the one that defines the
+    headline metric in hardarena.py)."""
+    from oripark.evals import OUTCOMES, play_episodes
+    stub = _OutcomeEnv(OUTCOMES)
+    r = play_episodes(stub, lambda obs: None, max_steps=50, n_target=5)
+    for o in OUTCOMES:
+        assert r["counts"][o] == 1, f"{o} mis-counted: {r['counts']}"
+    assert sum(r["counts"].values()) == r["n"] == 5
+    assert r["esc"] == 1 and r["caught"] == 1 and r["tm"] == 1
+    assert r["ev_hazard"] == 1 and r["ch_hazard"] == 1
+    assert abs(r["esc_rate"] - 1 / 5) < 1e-9, r["esc_rate"]
+    assert stub.closed
+
+
+def test_artifact_tables_share_one_denominator():
+    """Every escape-rate artifact must show escaped/n with n = all finished
+    episodes, and the outcome columns must sum to n."""
+    import re
+    import subprocess
+    import sys
+    out = subprocess.run(
+        [sys.executable, "hardarena.py", "--run", "results/run17",
+         "--chaser-run", "results/run17", "--matches", "6", "--chaser",
+         "stoch", "--set", "07", "--expert", "--out", "/tmp/_t_metric.md"],
+        capture_output=True, text=True, cwd=PROJECT_ROOT)
+    assert out.returncode == 0, out.stderr[-2000:]
+    text = open("/tmp/_t_metric.md").read()
+    rows = [l for l in text.splitlines() if l.startswith("| ") and "%" in l]
+    assert rows, text
+    for line in rows:
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        m = re.match(r"([\d.]+)%\s*\((\d+)/(\d+)\)", cells[1])
+        assert m, line
+        pct, esc, n = float(m.group(1)), int(m.group(2)), int(m.group(3))
+        nums = [int(cells[i]) for i in (2, 3, 4, 5, 6)]
+        assert sum(nums) == n, f"outcome columns must sum to n: {line}"
+        assert abs(pct - 100 * esc / n) < 0.6, f"percent must be esc/n: {line}"
