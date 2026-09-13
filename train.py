@@ -48,6 +48,17 @@ def main():
                     help="up,down patch rows for the FROZEN opponent, so a "
                          "checkpoint trained with a different obs window keeps "
                          "its native geometry instead of seeing a shifted patch")
+    ap.add_argument("--adv-sigma-floor", type=float, default=None,
+                    help="lower bound on the arena-adversary sigma. At the 0.05 "
+                         "default the CEM collapses to a near-point distribution "
+                         "and the policy is tested on arenas it never trained on")
+    ap.add_argument("--adv-sigma0", type=float, default=None)
+    ap.add_argument("--adv-mu-init", type=str, default=None,
+                    help="6 comma-separated arena params to start the adversary "
+                         "at (default 0.15,0.15,0.05,0.2,0.2,0.05 = easy)")
+    ap.add_argument("--obs-path-hint", action="store_true",
+                    help="append 6 BFS waypoint features to the evader obs (the "
+                         "expert's route plan; see docs/EXPERIMENTS.md E26)")
     ap.add_argument("--patch-up", type=int, default=None,
                     help="rows of the obs patch ABOVE the agent (default 7)")
     ap.add_argument("--patch-down", type=int, default=None,
@@ -155,6 +166,14 @@ def main():
 
     mp = MoveParams()
     ep = EnvParams()
+    if args.adv_sigma_floor is not None:
+        tp.adv_sigma_floor = args.adv_sigma_floor
+    if args.adv_sigma0 is not None:
+        tp.adv_sigma0 = args.adv_sigma0
+    if args.adv_mu_init:
+        tp.adv_mu_init = tuple(float(x) for x in args.adv_mu_init.split(","))
+    if args.obs_path_hint:
+        ep.obs_path_hint = True
     if args.patch_up is not None:
         ep.patch_up = args.patch_up
     if args.patch_down is not None:

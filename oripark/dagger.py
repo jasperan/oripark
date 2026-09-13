@@ -175,6 +175,9 @@ def main():
                     help="run the frozen chaser in the pre-fix obs convention, "
                          "i.e. the convention it was trained in (without this "
                          "a pre-fix chaser is a crippled opponent)")
+    ap.add_argument("--obs-path-hint", action="store_true",
+                    help="append the 6 BFS waypoint features to the evader obs "
+                         "(see docs/EXPERIMENTS.md E26)")
     ap.add_argument("--role", choices=["evader", "chaser"], default="evader",
                     help="which side to distil: the evader from the scripted "
                          "evader, or the chaser from the scripted pursuer "
@@ -190,6 +193,8 @@ def main():
     n_envs = args.workers or tp.n_envs
 
     role = args.role
+    if args.obs_path_hint:
+        ep.obs_path_hint = True
     rng = np.random.default_rng(tp.seed + 7)
     gen = ArenaGenerator(mp, rng, chaser_frac=ep.chaser_spawn_frac)
     mu = (np.load(os.path.join(args.run, "adv_mu.npy"))
@@ -283,6 +288,10 @@ def main():
     env.close()
 
     stem = "evader"
+    # write params.json so hardarena/select/traversal_probe pick up the same obs
+    # geometry (e.g. obs_path_hint) when evaluating this policy
+    from .config import save_run_params
+    save_run_params(args.out, tp, mp, ep)
     out_path = os.path.join(args.out, f"{stem}_init.pt")
     torch.save(policy.state_dict(), out_path)
     # also write an SB3 checkpoint so the distilled policy can be entered

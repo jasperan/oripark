@@ -139,8 +139,11 @@ class OriArenaVecEnv(VecEnv):
         self.opp_acts_fn = opp_acts_fn        # privileged-state opponent policy
         self.rng = np.random.default_rng(seed)
 
+        self.hint = bool(getattr(ep, "obs_path_hint", False)) and role == "evader"
         self.obs_dim = 24 + (ep.patch_back + 1 + ep.patch_front) * \
-            (ep.patch_up + 1 + ep.patch_down) + (4 if role == "chaser" else 0)
+            (ep.patch_up + 1 + ep.patch_down) + (4 if role == "chaser" else 0) \
+            + (6 if self.hint else 0)
+        self._path_cache: dict = {}
         obs_space = spaces.Box(low=-5.0, high=5.0, shape=(self.obs_dim,), dtype=np.float32)
         act_space = EV_ACT if role == "evader" else CH_ACT
         super().__init__(n_envs, obs_space, act_space)
@@ -252,7 +255,51 @@ class OriArenaVecEnv(VecEnv):
             scal = _scalars(self.phys, ch, ev, self.p, self.ep, self.t, extra=extra)
         pat = _patch(self.phys, ev if self.role == "evader" else ch,
                      ch if self.role == "evader" else ev, self.ep)
-        return np.concatenate([scal, pat], axis=1).astype(np.float32)
+        parts = [scal, pat]
+        if self.hint:
+            parts.append(self._hint_features())
+        return np.concatenate(parts, axis=1).astype(np.float32)
+
+    def _hint_features(self) -> np.ndarray:
+        """Six BFS-route features per env: relative direction to the next and the
+        following waypoint along the expert's spike-free route to the portal, the
+        remaining route length (normalised), and the next segment's vertical
+        direction. The route is cached per arena, so the cost is one BFS per
+        arena ever, not per step."""
+        from .scripted import bfs_path
+        N = self.n_envs
+        t = float(self.p.tile)
+        p = self.p
+        out = np.zeros((N, 6), dtype=np.float32)
+        for i in range(N):
+            a = self.arenas[i]
+            if a is None:
+                continue
+            key = id(a)
+            path = self._path_cache.get(key)
+            if path is None:
+                sx = int(a.ev_spawn[0] / t)
+                sy = int(a.ev_spawn[1] / t)
+                while sy > 0 and a.grid[sy, sx] == SOLID:
+                    sy -= 1
+                path = bfs_path(a.grid, (sx, sy),
+                                (int(a.portal[0] / t), int(a.portal[1] / t))) or []
+                self._path_cache[key] = path
+            if not path:
+                continue
+            x, y = float(self.phys.x[i]), float(self.phys.y[i])
+            j = 0
+            while j + 1 < len(path) and path[j][0] * t <= x - 4:
+                j += 1
+            w1 = path[j]
+            w2 = path[min(j + 2, len(path) - 1)]
+            out[i, 0] = np.clip(((w1[0] + 0.5) * t - x) / 160.0, -3, 3)
+            out[i, 1] = np.clip(((w1[1] + 0.5) * t - y) / 160.0, -3, 3)
+            out[i, 2] = np.clip(((w2[0] + 0.5) * t - x) / 160.0, -3, 3)
+            out[i, 3] = np.clip(((w2[1] + 0.5) * t - y) / 160.0, -3, 3)
+            out[i, 4] = min(len(path) - j, 40) / 40.0
+            out[i, 5] = np.clip((w2[1] - w1[1]) / 3.0, -1, 1)
+        return out
 
     def _obs_both(self) -> dict:
         N = self.n_envs

@@ -276,7 +276,9 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
     rng = np.random.default_rng(tp.seed)
     gen = ArenaGenerator(mp, rng)
     adv = TerrainAdversary(gen, rng, pop=tp.adv_pop, elites=tp.adv_elites,
-                           sigma0=tp.adv_sigma0, target_wr=tp.adv_target_wr)
+                           sigma0=tp.adv_sigma0, target_wr=tp.adv_target_wr,
+                           sigma_floor=getattr(tp, "adv_sigma_floor", 0.05),
+                           mu0=getattr(tp, "adv_mu_init", None))
     tr_sampler = adv
     if getattr(tp, "gap_force_prob", 0.0) > 0:
         tr_sampler = GapSprinkler(adv, tp.gap_force_prob, tp.gap_force, gen, rng)

@@ -506,6 +506,44 @@ def collect_demos(env, scripted, n_episodes: int, max_steps: int,
                               "waves": total_waves}
 
 
+def expert_winnable_probe(arenas, mp, ep, n, max_steps=None, batch=16):
+    """Calm-oracle filter usable from probe scripts (the env-side oracle lives
+    in hardarena.expert_winnable; this is the same protocol, kept local so the
+    audit scripts do not import the CLI module). Returns up to n arenas the
+    scripted expert escapes with the chaser parked."""
+    from .env import OriArenaVecEnv
+    max_steps = max_steps or ep.max_steps
+
+    class Fix:
+        def __init__(self, chunk):
+            self.chunk = chunk
+
+        def sample(self, m):
+            return [self.chunk[k % len(self.chunk)] for k in range(m)]
+
+    ok = []
+    for s0 in range(0, len(arenas), batch):
+        chunk = arenas[s0:s0 + batch]
+        env = OriArenaVecEnv("evader", len(chunk), Fix(chunk), mp, ep, seed=0,
+                             chaser_ghost=True)
+        act = expert_act_fn(env)
+        obs = env.reset()
+        alive = np.ones(len(chunk), dtype=bool)
+        for _ in range(max_steps):
+            obs, _, done, infos = env.step(act(obs))
+            for i, info in enumerate(infos):
+                if "episode" in info and alive[i]:
+                    alive[i] = False
+                    if info["outcome"] == "escaped":
+                        ok.append(chunk[i])
+            if not alive.any():
+                break
+        env.close()
+        if len(ok) >= n:
+            break
+    return ok[:n]
+
+
 def expert_act_fn(env):
     """VecEnv-compatible act_fn driving ScriptedEvader agents from privileged
     state (used to measure the scripted expert on the same protocol as the
