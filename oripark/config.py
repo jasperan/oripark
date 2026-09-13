@@ -74,7 +74,9 @@ class EnvParams:
     r_agility: float = 0.06
     r_portal: float = 10.0                   # clean escape — the dominant objective
     r_caught: float = -8.0
-    r_hazard: float = -8.0
+    r_hazard: float = -8.0                  # evader dies on spikes
+    r_hazard_ch: float = -8.0               # chaser impales itself (learned
+    # chasers die this way in 19-43% of episodes; see docs/EXPERIMENTS.md E21)
     r_timeout: float = -10.0                 # failing to escape is a loss for the evader
     r_hindsight: float = 2.0                 # credit best-ever portal progress on failure
     # forward-biased observation patch: the game is a rightward escape, and

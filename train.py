@@ -27,13 +27,24 @@ def main():
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--device", type=str, default=None, help="cpu or cuda (default: cuda if available)")
     ap.add_argument("--quick", action="store_true", help="tiny smoke-test config")
+    ap.add_argument("--chaser-net", type=str, default=None,
+                    help="comma-separated hidden widths for the chaser")
     ap.add_argument("--evader-net", type=str, default=None, help="e.g. 384,384")
     ap.add_argument("--evader-lr", type=float, default=None)
     ap.add_argument("--init-evader", type=str, default=None,
-                    help="warm-start the evader from a state-dict checkpoint "
-                         "(e.g. results/<dagger_run>/evader_init.pt). PPO then "
-                         "refines an already-competent policy instead of a "
-                         "random init that escapes 0%% of hard arenas.")
+                    help="warm-start the evader from a state dict (.pt) or any "
+                         "SB3 checkpoint (.zip), e.g. results/runN/evader.zip. "
+                         "PPO then refines an already-competent policy instead "
+                         "of a random init that escapes 0%% of hard arenas.")
+    ap.add_argument("--r-hazard", type=float, default=None,
+                    help="override the evader's spike-death reward. It defaults "
+                         "to the SAME value as r_caught (-8), so the learner is "
+                         "indifferent between dying on spikes and being caught "
+                         "and has no reason to be spike-safe; learned evaders "
+                         "die on spikes 4-5x as often as the scripted expert")
+    ap.add_argument("--r-hazard-ch", type=float, default=None,
+                    help="override the CHASER's self-impalement reward (the "
+                         "suicide rate is the learned chaser's worst defect)")
     ap.add_argument("--init-chaser", type=str, default=None,
                     help="warm-start the chaser from a state-dict checkpoint "
                          "(e.g. a DAgger distillation of the scripted pursuer, "
@@ -71,6 +82,33 @@ def main():
         tp.out_dir = args.out
     if args.evader_net:
         tp.evader_net = [int(x) for x in args.evader_net.split(",")]
+    # warm starts must match the checkpoint's architecture: run21 is 384-wide
+    # while the default is 256, and a mismatch only surfaces as a torch
+    # "size mismatch" traceback mid-run
+    def _net_from_ckpt(path):
+        from stable_baselines3 import PPO as _PPO
+        sd = _PPO.load(path, device="cpu").policy.state_dict()
+        ws = [v.shape for k, v in sd.items()
+              if k.startswith("mlp_extractor.policy_net.") and k.endswith(".weight")]
+        if not ws:
+            return None
+        # every Linear in mlp_extractor.policy_net is a hidden layer (the
+        # action head lives in action_net), so count them all: run21 has two
+        # 384-wide layers and reports [384, 384]
+        return [int(ws[0][0])] * len(ws)
+
+    if args.init_evader and args.init_evader.endswith(".zip") and not args.evader_net:
+        net = _net_from_ckpt(args.init_evader)
+        if net:
+            tp.evader_net = net
+            print(f"[cfg] evader net {net} (from {args.init_evader})", flush=True)
+    if args.init_chaser and args.init_chaser.endswith(".zip") and not getattr(args, "chaser_net", None):
+        net = _net_from_ckpt(args.init_chaser)
+        if net:
+            tp.chaser_net = net
+            print(f"[cfg] chaser net {net} (from {args.init_chaser})", flush=True)
+    if args.chaser_net:
+        tp.chaser_net = [int(x) for x in args.chaser_net.split(",")]
     if args.evader_lr:
         tp.evader_lr = args.evader_lr
     if args.init_chaser:
@@ -86,6 +124,12 @@ def main():
 
     mp = MoveParams()
     ep = EnvParams()
+    if args.r_hazard is not None:
+        ep.r_hazard = args.r_hazard
+        print(f"[cfg] evader hazard-death reward {ep.r_hazard}", flush=True)
+    if args.r_hazard_ch is not None:
+        ep.r_hazard_ch = args.r_hazard_ch
+        print(f"[cfg] chaser self-impalement reward {ep.r_hazard_ch}", flush=True)
     save_run_params(tp.out_dir, tp, mp, ep)   # persist the exact run config
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     print(f"== ori-park self-play | device={device} | blocks={tp.blocks} "

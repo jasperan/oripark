@@ -383,7 +383,7 @@ class OriArenaVecEnv(VecEnv):
         r_ev = np.where(died_ev, ep.r_hazard, r_ev)
         r_ch = np.where(died_ev, 0.5, r_ch)
         r_ev = np.where(died_ch, 0.5, r_ev)
-        r_ch = np.where(died_ch, ep.r_hazard, r_ch)
+        r_ch = np.where(died_ch, ep.r_hazard_ch, r_ch)
         r_ev = np.where(timeout, ep.r_timeout, r_ev)
         r_ch = np.where(timeout, -ep.r_timeout, r_ch)
         # --- hindsight shaping: credit best-ever portal progress on failure,

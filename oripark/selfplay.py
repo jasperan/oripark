@@ -293,16 +293,23 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
     # optional warm start (e.g. a DAgger distillation of the scripted expert):
     # PPO then refines an already-competent policy instead of starting from a
     # random init that cannot escape at all (measured floor: 0%).
+    def _warm(policy, path, tag):
+        """Accept a bare state dict (.pt) or an SB3 checkpoint (.zip), so any
+        run's evader.zip can be fine-tuned further."""
+        if path.endswith(".zip"):
+            from stable_baselines3 import PPO
+            policy.load_state_dict(PPO.load(path, device=device).policy.state_dict())
+        else:
+            policy.load_state_dict(
+                torch.load(path, map_location=device, weights_only=True))
+        print(f"[init] {tag} warm-started from {path}", flush=True)
+
     init_path = getattr(tp, "init_evader", None)
     if init_path:
-        evader.policy.load_state_dict(
-            torch.load(init_path, map_location=device, weights_only=True))
-        print(f"[init] evader warm-started from {init_path}", flush=True)
+        _warm(evader.policy, init_path, "evader")
     init_ch = getattr(tp, "init_chaser", None)
     if init_ch:
-        chaser.policy.load_state_dict(
-            torch.load(init_ch, map_location=device, weights_only=True))
-        print(f"[init] chaser warm-started from {init_ch}", flush=True)
+        _warm(chaser.policy, init_ch, "chaser")
 
     # league pools (snapshot[0] = random init, used for "before" demos)
     ev_pool = [clone_policy(evader.policy, boot_ev, tp, tp.seed, device, "evader")]
