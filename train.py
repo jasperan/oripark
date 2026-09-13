@@ -27,6 +27,14 @@ def main():
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--device", type=str, default=None, help="cpu or cuda (default: cuda if available)")
     ap.add_argument("--quick", action="store_true", help="tiny smoke-test config")
+    ap.add_argument("--chaser-lr", type=float, default=None,
+                    help="chaser learning rate; 0 freezes it. With a frozen "
+                         "chaser the evader's league opponent never changes, "
+                         "which tests whether co-evolution is what erodes a "
+                         "fine-tuned policy (E23: 53%% -> 25%% over 120 blocks)")
+    ap.add_argument("--warmup-blocks", type=int, default=None,
+                    help="blocks of random-chaser warmup; set 0 when warm "
+                         "starting from a competent policy")
     ap.add_argument("--chaser-net", type=str, default=None,
                     help="comma-separated hidden widths for the chaser")
     ap.add_argument("--evader-net", type=str, default=None, help="e.g. 384,384")
@@ -107,6 +115,16 @@ def main():
         if net:
             tp.chaser_net = net
             print(f"[cfg] chaser net {net} (from {args.init_chaser})", flush=True)
+    if args.chaser_lr is not None:
+        tp.chaser_lr = args.chaser_lr
+    if args.warmup_blocks is not None:
+        tp.warmup_blocks = args.warmup_blocks
+    elif args.init_evader or args.init_chaser:
+        # a warm-started policy must not spend its first blocks playing a
+        # RANDOM opponent: run24 (warm start, default 30-block warmup) fell from
+        # 53% to 42% on the fixed benchmark inside that window
+        print(f"[cfg] warmup_blocks {tp.warmup_blocks} -> 0 (warm start)", flush=True)
+        tp.warmup_blocks = 0
     if args.chaser_net:
         tp.chaser_net = [int(x) for x in args.chaser_net.split(",")]
     if args.evader_lr:
