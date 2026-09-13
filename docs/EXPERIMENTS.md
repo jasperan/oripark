@@ -377,3 +377,54 @@ appended below when it completes.
   three times as often. Being unpredictable is worth more than planning
   against this particular pursuer; the finding is worth remembering when
   reading "expert" as a ceiling.
+
+## E23 — the reported checkpoint was the last block, not the best (DEFECT)
+Sweeping every saved checkpoint on one arena block exposed the biggest
+reporting defect in the repo: `evader.zip` is the LAST-block save, but every
+tool labelled it `trained (best)`, and `select.py` — which exists to pick the
+best block by escape rate on a fixed arena set — had never been run for the
+recent runs (`selected.txt` was hand-authored, which the audit caught).
+
+| run | best block (selection block seed0=3000) | last block b299 |
+|---|---:|---:|
+| run22 | b220 62% | 26% |
+| run21 | b200 59% | 37% |
+| run23 | b260 31% (b250 43% on a 60-match sweep) | 18% |
+
+Those 59-62% do NOT survive re-measurement on a disjoint arena block, which is
+the second half of the lesson: with ~31 checkpoints to choose from and 24-48
+matches each, the maximum is a winner's-curse estimate (n=48 -> SE ~7%). On the
+disjoint reporting block (seed0=9000, 100 matches, vs run21's chaser):
+
+| policy | escape | ev_hazard |
+|---|---:|---:|
+| run21 trained (final b299) | **37%** | 19 |
+| run23 DAgger init (distillation only) | 36% | 19 |
+| scripted expert | 33% | 4 |
+| run22 trained (selected b220) | 33% | 15 |
+| dagger_mix (4 rotating opponents, ~190k pairs) | 31% | 17 |
+| run22 init / pool b0 | 28% / 27% | 18 / 20 |
+| run22 trained (final b299) | 26% | 18 |
+| run23 trained (selected b260 / final b299) | 25% / 22% | 12 / 23 |
+
+**The arena block alone moves the expert from 54.5% (seed0=5000) to 33%
+(seed0=9000), so only same-block comparisons are meaningful** — everything
+above is one block, one opponent, 100 matches (SE ~4.7%).
+
+Protocol fixes: `hardarena --arena-seed0` (report on a different arena block
+than the one used for selection), `select.py --chaser-run` (a fixed opponent
+makes runs comparable) and `--arena-seed0`, `evader_final.zip` (the last-block
+save is preserved when selection overwrites `evader.zip`), self-describing
+`selected.txt`, and entrant labels that distinguish `selected bN` from
+`final b299`.
+
+## E24 — hazard-death incentive (SETUP)
+`r_hazard == r_caught == -8`: the evader is exactly indifferent between dying on
+spikes and being caught, while the hand-coded expert treats spikes as a hard
+avoidance constraint. Learned evaders therefore pay 17-23 spike deaths per 100
+episodes where the expert pays 4, and every spike death is an escape that never
+happened. Two 150-block fine-tunes warm-started from run21's final policy (the
+best measured policy) isolate the fix: run24 `--r-hazard -14` (evader side
+only) and run25 `--r-hazard -14 --r-hazard-ch -14` (also punish the chaser's
+own spike suicide, its worst defect). Early signal: with the chaser penalty the
+co-trained chaser survives to ~233 steps instead of ~176.
