@@ -9,6 +9,12 @@ stochastic frozen chaser, 100 seeded matches, identical draws per entrant, and
 columns is `run21_fixed`'s chaser — the only pursuer in this repo trained under
 fixed physics against an evader that cannot fly.
 
+The 100-match table below is kept for continuity, but see the **paired
+300-match table (E25)** at the end of this section: at 100 matches a single
+policy can move 5-8 points between calls, and identical weights score
+differently depending on which `--run` supplies the env config. Only the paired
+table supports ranking claims.
+
 | evader | vs run21 chaser | vs run17 chaser | zone | caught | ev_hazard | ch_hazard |
 |---|---:|---:|---:|---:|---:|---:|
 | scripted expert (privileged BFS, no NN) | **54.5%** | 27.7% | 10.5 | 18 | 1 | 27 |
@@ -20,6 +26,27 @@ fixed physics against an evader that cannot fly.
 | DAgger distillation of the expert (no PPO) | 29% | — | 8.8 | 28 | 22 | 21 |
 | BC / init policy (per run) | 7-19% | 0-17% | 5.8-7.9 | 31-36 | 18-40 | 22-37 |
 | **fresh random init** | **0%** (5/5 inits, 500 episodes) | — | ~2 | — | — | — |
+
+### Paired 300-match table (E25) — the ranking to quote
+
+One hardarena call, identical arenas (seed0=9000) and env seeds, 300 matches
+each, opponent = run21's chaser:
+
+| policy | escape | ev_hazard | how it was made |
+|---|---:|---:|---|
+| DAgger distillation of the expert | **35.3%** | 42 | 15 min, no RL |
+| run21 trained (final b299) | 32.1% | 44 | 300 self-play blocks from scratch |
+| run23 trained (selected b260) | 30.5% | 42 | 300 blocks, warm-started from a distillation |
+| run27 trained (final) | 30.0% | 81 | 150 blocks, frozen opponent, no random warmup |
+| run26 trained (final) | 19.3% | 112 | as run27 + stronger spike-death penalty |
+| scripted expert (100 matches, same block) | 33% | 4 | privileged BFS |
+
+So: **the distillation is the best policy measured so far, RL did not beat it
+in any configuration tried, and every learned policy dies on spikes 4-11x as
+often as the expert.** The expert's own score on this block is 33% where the
+same expert scores 54.5% on the seed0=5000 block — arena-block sensitivity is
+about as large as the differences between policies, which is why the paired
+protocol matters.
 
 Read:
 
