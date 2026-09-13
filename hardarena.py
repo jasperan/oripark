@@ -229,6 +229,11 @@ def main():
                     help="frozen chaser mode: argmax (det) or action sampling (stoch)")
     ap.add_argument("--set", choices=["mixed", "07", "085"], default="mixed",
                     help="arena difficulty mix (mixed = 2/3 x 0.7 + 1/3 x 0.85)")
+    ap.add_argument("--evader-ckpt", action="append", default=None,
+                    help="measure this exact checkpoint file (repeatable) "
+                         "instead of the standard entrant list; use it to "
+                         "compare one policy against another at high match "
+                         "counts without paying for every entrant")
     ap.add_argument("--entrants", choices=["trio", "all"], default="trio",
                     help="trio = random/BC/trained; all = every checkpoint too")
     ap.add_argument("--max-checkpoints", type=int, default=8)
@@ -324,6 +329,10 @@ def main():
     if args.expert:
         ents.append(("scripted expert", "__expert__"))
 
+    if args.evader_ckpt:
+        # measure exactly the requested files: building the standard entrant
+        # list is cheap, evaluating it at a high --matches count is not
+        ents = [(os.path.basename(pth), pth) for pth in args.evader_ckpt]
     mode = "stochastic chaser" if args.chaser == "stoch" else "deterministic chaser"
     print(f"hard-arena skill test: {args.matches} matches, stochastic evader, {mode}\n")
     rows = []
