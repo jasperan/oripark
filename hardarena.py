@@ -257,6 +257,9 @@ def main():
                          "they never trained on. Applies to the evader only: "
                          "pair it with --legacy-obs-chaser to put both sides "
                          "in their own training convention")
+    ap.add_argument("--max-cand", type=int, default=600,
+                    help="candidate arenas to generate before the oracle filter; "
+                         "raise it when --matches needs more winnable arenas")
     ap.add_argument("--arena-seed0", type=int, default=5000,
                     help="first arena seed; use a different block than the "
                          "one a checkpoint was SELECTED on, otherwise the "
@@ -283,7 +286,8 @@ def main():
     rng = np.random.default_rng(1)
     gen = ArenaGenerator(mp, rng, chaser_frac=ep.chaser_spawn_frac)
     sampler = HardSampler(gen, args.matches, mp, ep, mix=args.set,
-                          oracle=args.oracle, seed0=args.arena_seed0)
+                          oracle=args.oracle, seed0=args.arena_seed0,
+                          max_cand=args.max_cand)
 
     ch = None if args.scripted_chaser else load(
         os.path.join(crun, "chaser.zip"), "chaser", ctp, cmp_, cep)
