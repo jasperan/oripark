@@ -124,7 +124,8 @@ def dagger_collect(env, scripts, policy, n_episodes: int, max_steps: int,
 
 def dagger_rounds(env, scripts, policy, rounds: int = 4, episodes: int = 64,
                   epochs: int = 4, lr: float = 3e-4, device: str = "cpu",
-                  max_steps: int = 1500, log=print, role: str = "evader"):
+                  max_steps: int = 1500, log=print, role: str = "evader",
+                  opponent_cycle=None):
     """Interleaved collect/train rounds with a decaying expert mixing rate."""
     hist = []
     for r in range(rounds):
@@ -161,6 +162,13 @@ def main():
                     help="path to a specific frozen chaser checkpoint "
                          "(default <run>/chaser.zip, which only exists once "
                          "the run has finished; snapshots are chaser_bNNN.zip)")
+    ap.add_argument("--chaser-list", default=None,
+                    help="comma-separated opponent checkpoints (or run "
+                         "directories) to ROTATE per round; the literal "
+                         "token 'scripted' adds the privileged scripted "
+                         "pursuer. Single-opponent distillation overfits: "
+                         "distilled policies scored high on the arenas they "
+                         "were selected on and average elsewhere")
     ap.add_argument("--ghost", action="store_true",
                     help="train against a parked chaser instead of the run's")
     ap.add_argument("--legacy-obs-chaser", action="store_true",
@@ -212,7 +220,8 @@ def main():
         hist = dagger_rounds(env, scripts, policy, rounds=args.rounds,
                              episodes=args.episodes, epochs=args.epochs,
                              lr=args.lr, device=dev, max_steps=ep.max_steps,
-                             log=lambda m: print(m, flush=True), role=role)
+                             log=lambda m: print(m, flush=True), role=role,
+                             opponent_cycle=cycle)
         env.close()
         out_path = os.path.join(args.out, "chaser_init.pt")
         torch.save(policy.state_dict(), out_path)
@@ -225,8 +234,23 @@ def main():
         print(f"[dagger] wrote {out_path}")
         return
 
+    cycle = None
+    if args.chaser_list:
+        from stable_baselines3 import PPO as _PPO
+        cycle = []
+        for spec in [x.strip() for x in args.chaser_list.split(",") if x.strip()]:
+            if spec == "scripted":
+                cycle.append("scripted")
+                continue
+            pth = (os.path.join(spec, "chaser.zip") if os.path.isdir(spec)
+                   else spec)
+            probe = OriArenaVecEnv("chaser", 1, StaticArenaSampler(gen, mu, rng),
+                                   mp, cep, seed=0)
+            cycle.append(_PPO.load(pth, env=probe, device="cpu"))
+            probe.close()
+            print(f"[dagger] rotation opponent {len(cycle)}: {pth}", flush=True)
     chaser = None
-    if not args.ghost:
+    if not args.ghost and cycle is None:
         ck = args.chaser or os.path.join(args.run, "chaser.zip")
         if os.path.exists(ck):
             probe = OriArenaVecEnv("chaser", 1, StaticArenaSampler(gen, mu, rng),
@@ -236,11 +260,17 @@ def main():
             print(f"[dagger] opponent = {ck}", flush=True)
         else:
             print(f"[dagger] no chaser at {ck} -> ghost rollouts", flush=True)
-    opp = frozen_policy(chaser.policy, True) if chaser is not None else None
+    if cycle:
+        chaser = cycle[0]
+    opp = (None if (cycle and cycle[0] == "scripted")
+           else (frozen_policy(chaser.policy, True) if chaser is not None else None))
 
     env = OriArenaVecEnv("evader", n_envs, StaticArenaSampler(gen, mu, rng), mp, ep,
-                         opponent=opp, seed=tp.seed + 7, chaser_ghost=chaser is None,
-                         opp_ep=cep)
+                         opponent=opp, seed=tp.seed + 7,
+                         chaser_ghost=chaser is None and not cycle, opp_ep=cep)
+    if cycle and cycle[0] == "scripted":
+        from .scripted import scripted_chaser_act_fn
+        env.opp_acts_fn = scripted_chaser_act_fn(env)
     ppo = make_ppo(env, tp, tp.seed, dev, role)
     policy = ppo.policy
     policy.to(dev)

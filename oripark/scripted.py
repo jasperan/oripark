@@ -530,6 +530,31 @@ def expert_act_fn(env):
     return act
 
 
+def scripted_chaser_act_fn(env):
+    """VecEnv-compatible act_fn driving ScriptedChaser agents from privileged
+    state (the frozen non-suicidal pursuer: a stable benchmark opponent, and a
+    contrast to the learned chasers that impale themselves on spikes in 19-43%
+    of episodes). Chasers occupy indices N..2N-1, the evader at i."""
+    n = env.n_envs
+    hunters = [ScriptedChaser(env.p, env.ep) for _ in range(n)]
+
+    def act(_obs):
+        acts = []
+        ph = env.phys
+        for i in range(n):
+            ar = env.arenas[i]
+            if env.t[i] == 0:
+                hunters[i].reset(ar)
+            ci = n + i
+            acts.append(hunters[i].act(
+                ar, ph.x[ci], ph.y[ci], ph.vx[ci], ph.vy[ci], ph.on_ground[ci],
+                ph.wall_dir[ci], ph.can_djump[ci], ph.can_dash[ci], ph.dash_t[ci],
+                ph.facing[ci], evader_x=ph.x[i], evader_y=ph.y[i]))
+        return np.stack(acts)
+
+    return act
+
+
 if __name__ == "__main__":
     # quick self-test: scripted traversal escape rate on fixed arenas
     import sys, os

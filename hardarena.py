@@ -252,6 +252,10 @@ def main():
                          "they never trained on. Applies to the evader only: "
                          "pair it with --legacy-obs-chaser to put both sides "
                          "in their own training convention")
+    ap.add_argument("--arena-seed0", type=int, default=5000,
+                    help="first arena seed; use a different block than the "
+                         "one a checkpoint was SELECTED on, otherwise the "
+                         "reported rate is selection-biased")
     ap.add_argument("--oracle", choices=["calm", "panic"], default="calm",
                     help="arena filter: 'calm' = competent traversal (default, "
                          "documented intent); 'panic' = legacy buggy filter that "
@@ -274,7 +278,7 @@ def main():
     rng = np.random.default_rng(1)
     gen = ArenaGenerator(mp, rng, chaser_frac=ep.chaser_spawn_frac)
     sampler = HardSampler(gen, args.matches, mp, ep, mix=args.set,
-                          oracle=args.oracle)
+                          oracle=args.oracle, seed0=args.arena_seed0)
 
     ch = None if args.scripted_chaser else load(
         os.path.join(crun, "chaser.zip"), "chaser", ctp, cmp_, cep)
@@ -299,7 +303,24 @@ def main():
             ents.append((f"checkpoint b{b}", c))
     fin = os.path.join(args.run, "evader.zip")
     if os.path.exists(fin):
-        ents.append(("trained (best)", fin))
+        # evader.zip is the SELECTED checkpoint if select.py ran (it copies the
+        # best-by-fixed-benchmark block over the last-block save, keeping the
+        # latter as evader_final.zip). Only under self-play is the last block
+        # not the strongest -- run23's b299 scored 18% where b250 scored 43%.
+        sel = os.path.join(args.run, "selected.txt")
+        if os.path.exists(os.path.join(args.run, "evader_final.zip")):
+            tag = "trained (selected)"
+            if os.path.exists(sel):
+                with open(sel) as f:
+                    m = re.search(r"best checkpoint: block (\d+)", f.read())
+                if m:
+                    tag = f"trained (selected b{m.group(1)})"
+        else:
+            tag = "trained (final b299)"
+        ents.append((tag, fin))
+    finl = os.path.join(args.run, "evader_final.zip")
+    if os.path.exists(finl) and args.entrants != "all":
+        ents.append(("trained (final b299)", finl))
     if args.expert:
         ents.append(("scripted expert", "__expert__"))
 

@@ -84,6 +84,14 @@ def main():
     ap.add_argument("--arena-seeds", type=int, default=24)
     ap.add_argument("--matches-final", type=int, default=40,
                     help="matches for the chosen winner (tighter estimate)")
+    ap.add_argument("--chaser-run", default=None,
+                    help="select against THIS run's frozen chaser instead of "
+                         "the run's own (a fixed opponent makes the selection "
+                         "comparable across runs)")
+    ap.add_argument("--arena-seed0", type=int, default=1000,
+                    help="first arena seed for the SELECTION block; report the "
+                         "winner on a disjoint block (hardarena --arena-seed0) "
+                         "so the number is not selection-biased")
     args = ap.parse_args()
 
     tp, mp, ep = load_run_params(args.run)
@@ -95,10 +103,15 @@ def main():
     sig = np.load(os.path.join(args.run, "adv_sigma.npy")) if os.path.exists(
         os.path.join(args.run, "adv_sigma.npy")) else np.full(6, 0.3)
     arng = np.random.default_rng(4242)
-    arenas = [gen.generate(np.clip(mu + sig * arng.standard_normal(6), 0, 1), seed=1000 + k)
+    arenas = [gen.generate(np.clip(mu + sig * arng.standard_normal(6), 0, 1),
+                           seed=args.arena_seed0 + k)
               for k in range(args.arena_seeds)]
 
-    ch = load(os.path.join(args.run, "chaser.zip"), "chaser", tp, mp, ep)
+    crun = args.chaser_run or args.run
+    ctp, cmp_, cep = load_run_params(crun) if crun != args.run else (tp, mp, ep)
+    if crun != args.run:
+        set_nets_from_run(ctp, crun)
+    ch = load(os.path.join(crun, "chaser.zip"), "chaser", ctp, cmp_, cep)
 
     ckpts = []
     for p in sorted(glob.glob(os.path.join(args.run, "evader_b*.zip"))):
@@ -124,6 +137,12 @@ def main():
     best_path = [p for b, p in ckpts if b == best_block][0]
     out = os.path.join(args.run, "evader.zip")
     import shutil
+    if os.path.exists(out) and os.path.abspath(out) != os.path.abspath(best_path):
+        # keep the last-block checkpoint: it is what training reported, and it
+        # is NOT always the strongest policy (run23: b299 18% vs b250 43%)
+        fin = os.path.join(args.run, "evader_final.zip")
+        if not os.path.exists(fin):
+            shutil.copy(out, fin)
     shutil.copy(best_path, out)
     print(f"\nBEST: block {best_block} ({best_rate:.0%} escape, {best_esc}/{best_n}, "
           f"caught {best_caught}) -> {out}")
@@ -136,8 +155,13 @@ def main():
           f"caught {caught}")
     with open(os.path.join(args.run, "selected.txt"), "w") as f:
         f.write(f"best checkpoint: block {best_block}\n"
-                f"escape rate (24 matches): {best_rate:.0%} ({best_esc}/{best_n})\n"
-                f"final re-eval: {rate:.0%} ({esc}/{n}), caught {caught}\n")
+                f"escape rate ({args.matches} matches, selection block "
+                f"seed0={args.arena_seed0}): {best_rate:.0%} ({best_esc}/{best_n})\n"
+                f"winner re-eval ({args.matches_final} matches, SAME block): "
+                f"{rate:.0%} ({esc}/{n}), caught {caught}\n"
+                f"selection opponent: {os.path.join(crun, 'chaser.zip')}\n"
+                f"NOTE: re-report on a disjoint arena block (hardarena "
+                f"--arena-seed0) before quoting this number.\n")
 
 
 if __name__ == "__main__":
