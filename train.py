@@ -44,6 +44,19 @@ def main():
                          "SB3 checkpoint (.zip), e.g. results/runN/evader.zip. "
                          "PPO then refines an already-competent policy instead "
                          "of a random init that escapes 0%% of hard arenas.")
+    ap.add_argument("--opp-patch", type=str, default=None,
+                    help="up,down patch rows for the FROZEN opponent, so a "
+                         "checkpoint trained with a different obs window keeps "
+                         "its native geometry instead of seeing a shifted patch")
+    ap.add_argument("--patch-up", type=int, default=None,
+                    help="rows of the obs patch ABOVE the agent (default 7)")
+    ap.add_argument("--patch-down", type=int, default=None,
+                    help="rows of the obs patch BELOW the agent (default 2!). A "
+                         "post-mortem shows 100%% of spike deaths come from "
+                         "falling onto a spike that was outside this window one "
+                         "step before the death, so the policy cannot see the "
+                         "hazard it lands on. Keeping up+1+down = 10 preserves "
+                         "obs_dim, so existing checkpoints still load")
     ap.add_argument("--r-hazard", type=float, default=None,
                     help="override the evader's spike-death reward. It defaults "
                          "to the SAME value as r_caught (-8), so the learner is "
@@ -142,6 +155,21 @@ def main():
 
     mp = MoveParams()
     ep = EnvParams()
+    if args.patch_up is not None:
+        ep.patch_up = args.patch_up
+    if args.patch_down is not None:
+        ep.patch_down = args.patch_down
+    if args.patch_up is not None or args.patch_down is not None:
+        print(f"[cfg] obs patch up={ep.patch_up} down={ep.patch_down} "
+              f"(window {ep.patch_up + 1 + ep.patch_down} rows, "
+              f"obs_dim {24 + (ep.patch_back + 1 + ep.patch_front) * (ep.patch_up + 1 + ep.patch_down)})",
+              flush=True)
+    if args.opp_patch:
+        u, d = (int(x) for x in args.opp_patch.split(","))
+        from dataclasses import replace as _replace
+        tp.opp_ep = _replace(ep, patch_up=u, patch_down=d,
+                            patch_back=ep.patch_back, patch_front=ep.patch_front)
+        print(f"[cfg] frozen opponent patch up={u} down={d}", flush=True)
     if args.r_hazard is not None:
         ep.r_hazard = args.r_hazard
         print(f"[cfg] evader hazard-death reward {ep.r_hazard}", flush=True)

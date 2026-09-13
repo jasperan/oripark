@@ -138,6 +138,9 @@ class TrainParams:
     bc_epochs: int = 8                       # BC epochs (0 = skip behavior cloning)
     init_evader: str | None = None           # warm-start evader checkpoint (state dict)
     init_chaser: str | None = None           # warm-start chaser checkpoint
+    opp_patch: tuple | None = None           # (up, down) patch rows for a FROZEN
+    # opponent trained with a different obs geometry: without this, changing the
+    # obs window silently shifts the opponent's own patch and changes its play
     bc_flee_frac: float = 0.35               # fraction of BC demos collected with a
                                              # pursuer hovering behind (flee patterns)
     bc_pursued_dx: float = -120.0            # fake chaser offset for flee demos

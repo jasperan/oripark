@@ -181,7 +181,8 @@ def _cand_eval(cands, ev_pol, ch_pol, gen, mp, ep, tp, device) -> np.ndarray:
 
 
 def evaluate(ev_pol, ch_pol, sampler, mp, ep, n_envs: int, max_steps: int,
-             seed: int = 7, stochastic: bool = False) -> dict:
+             seed: int = 7, stochastic: bool = False,
+             opp_ep: EnvParams | None = None) -> dict:
     """Head-to-head eval: evader policy vs chaser policy.
 
     Win semantics: escape/ch_hazard = evader win; caught/ev_hazard = chaser
@@ -388,7 +389,8 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
             opp_name = "pool"
         env = OriArenaVecEnv("evader", tp.n_envs, tr_sampler, mp, ep,
                              opponent=None if opp is None else frozen_policy(opp),
-                             seed=tp.seed + block)
+                             seed=tp.seed + block,
+                             opp_ep=getattr(tp, "opp_ep", None))
         evader.env = env
         evader.learn(total_timesteps=tp.block_steps,
                      callback=_Drain(env, metrics, "evader"),
@@ -411,7 +413,7 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
         # ---------------- eval + snapshot evader ----------------
         res = evaluate(evader.policy, chaser.policy, eval_sampler, mp, ep,
                        n_envs=min(tp.eval_matches, tp.n_envs), max_steps=tp.eval_ep_len,
-                       stochastic=True)
+                       stochastic=True, opp_ep=getattr(tp, "opp_ep", None))
         n = res["wins"] + res["losses"] + res["draws"]
         score = (res["wins"] + 0.5 * res["draws"]) / max(n, 1)
         elo_pair_update(elo_ev, elo_ch, score)
