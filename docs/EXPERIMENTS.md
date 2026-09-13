@@ -428,3 +428,42 @@ best measured policy) isolate the fix: run24 `--r-hazard -14` (evader side
 only) and run25 `--r-hazard -14 --r-hazard-ch -14` (also punish the chaser's
 own spike suicide, its worst defect). Early signal: with the chaser penalty the
 co-trained chaser survives to ~233 steps instead of ~176.
+
+## E25 — the improvement loop has hit a plateau, and 100-match claims were noise
+Definitive measurement: ONE hardarena call (identical arena set seed0=9000, identical
+env seeds, 300 matches each, vs run21's chaser), so the comparison is paired:
+
+| policy | escape | ev_hazard |
+|---|---:|---:|
+| DAgger distillation only (dagger_run23, 15 min, no RL) | **35.3%** | 42 |
+| run21 trained (final b299) | 32.1% | 44 |
+| run23 trained (selected b260) | 30.5% | 42 |
+| run27 trained (150 blocks, frozen opponent, no warmup) | 30.0% | 81 |
+| run26 trained (frozen opponent + hazard rewards) | **19.3%** | 112 |
+
+Everything learned lands at or below the distillation; the scripted expert measured
+33% on this block at 100 matches. Conclusions that survive:
+- **No strategy tested clearly beats run21's final policy or a plain distillation.**
+  Distillation reaches that level in ~15 minutes where RL takes hours.
+- **The hazard-reward change fails** (run26: 19.3%, i.e. spike deaths rose to 112
+  per ~300 episodes, the worst of any policy): making spike death worse than
+  capture pushes the evader into more spikes, not fewer.
+- **Freezing the opponent does not recover the erosion either**: run27 (frozen
+  run23 chaser, warmup disabled) ends level with its own starting point (30.0%
+  vs run21's 32.1%) and doubles the spike-death rate.
+- Every learned policy dies on spikes 4-11x as often as the scripted expert
+  (42-112 vs ~10 per test): the dominant remaining failure mode is hazard
+  handling, and it is not fixed by penalizing it harder.
+
+### Measurement protocol (two defects found while making the table above)
+1. **A 100-match, single-block comparison cannot resolve the differences being
+   claimed.** run27's last block scored 43% at 100 matches and 30% at 300 with
+   the same arenas; run22's checkpoint sweep produced 57-62% estimates that fell
+   to 26-33% on a disjoint block. Treat anything under ~300 matches and without a
+   paired design as a hypothesis, not a result.
+2. **The `--run` flag changes the measurement, not just the entrant.** run21's
+   evader_final.zip scores 32.1% with `--run results/run21_fixed` and 28.9% with
+   `--run results/run24_haz_ev` on the same arena block (identical weights, same
+   command otherwise): the run supplies the env params (n_envs -> batch layout,
+   reward values, obs geometry). Therefore competing policies must be measured in
+   ONE call via repeated `--evader-ckpt`, which is what `--evader-ckpt` exists for.
