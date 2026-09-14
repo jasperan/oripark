@@ -1,5 +1,13 @@
 # ori-park — Ori-style movement physics + adversarial RL tag game
 
+## Moonlit field observatory
+
+![Ori's moonlit arena with layered forest silhouettes, luminous terrain edges, spirit agents, and a replay telemetry HUD](docs/media/moonlit-observatory.png)
+
+The replay renderer uses a moonlit forest palette, layered distant trees, soft radial glows, and a two-tier observation HUD. Portal proximity and movement counters stay visible alongside the replay label; each outcome gets a distinct completion banner.
+
+This frame shows the **initial state of a seeded procedural arena**, not a trained-policy result. The visual upgrade does not alter physics, arena geometry, or published evaluation numbers. Regenerate it with `.venv/bin/python scripts/capture_visual_showcase.py`.
+
 A from-scratch 2D physics engine that recreates the **movement model of Ori
 and the Will of the Wisps**, wrapped in a vectorized gymnasium environment,
 trained by a **self-play league of two adversarial neural-network policies**
