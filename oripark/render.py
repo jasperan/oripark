@@ -8,7 +8,7 @@ agent; `--mode after` uses the trained policy.
 Visual language (kept deliberately legible — these GIFs are the evidence for
 "the agent got better", so the play space must stay readable):
 
-  * warm god-light sky, a distant canopy silhouette confined to the top band
+  * moonlit blue-green sky, layered forest silhouettes, a distant canopy confined to the top band
     (it used to be two layers of near-black blobs over the whole arena, which
     buried the platforms and the agents),
   * terrain drawn as merged rock masses with a mossy cap instead of
@@ -17,7 +17,7 @@ Visual language (kept deliberately legible — these GIFs are the evidence for
     crimson so threat reads at a glance,
   * spikes as a sharp magenta hazard strip, orbs as warm bash anchors,
     the portal as a tall swirling gate with a light column,
-  * a two-row HUD with portal progress and the agility counters.
+  * an observation HUD with portal proximity and the agility counters.
 
 `deterministic` controls the RECORDED policy; `chaser_deterministic` controls
 the frozen chaser independently (they used to share one flag, which silently
@@ -99,11 +99,11 @@ class ReplayRecorder:
 
 # ------------------------------------------------------------------ rendering
 _PAL = {
-    "sky_top": (255, 226, 160), "sky_mid": (150, 206, 194),
-    "sky_low": (34, 92, 106), "sky_bot": (8, 22, 36),
-    "canopy_far": (26, 52, 70), "canopy_near": (14, 34, 50),
-    "rock": (96, 78, 66), "rock_dark": (54, 42, 36), "rock_deep": (34, 26, 24),
-    "moss": (96, 158, 92), "moss_hi": (162, 216, 138), "moss_lo": (58, 108, 66),
+    "sky_top": (13, 30, 49), "sky_mid": (46, 102, 119),
+    "sky_low": (27, 65, 82), "sky_bot": (8, 20, 34),
+    "canopy_far": (26, 60, 74), "canopy_near": (9, 28, 41),
+    "rock": (49, 68, 76), "rock_dark": (29, 45, 55), "rock_deep": (18, 31, 43),
+    "moss": (78, 151, 144), "moss_hi": (156, 221, 191), "moss_lo": (45, 104, 107),
     "spike": (226, 44, 116), "spike_hi": (255, 150, 196), "spike_lo": (128, 18, 62),
     "orb": (255, 206, 96), "orb_hi": (255, 248, 214), "orb_ring": (188, 132, 46),
     "portal": (118, 226, 255), "portal_hi": (238, 252, 255), "portal_deep": (36, 108, 168),
@@ -111,7 +111,7 @@ _PAL = {
     "chaser": (120, 22, 40), "chaser_core": (255, 110, 130), "chaser_glow": (255, 62, 92),
     "firefly": (255, 240, 190), "hud": (8, 16, 28), "hud_text": (226, 242, 255),
     "hud_dim": (150, 176, 200), "good": (128, 230, 168), "bad": (255, 122, 138),
-    "ray": (255, 236, 190),
+    "ray": (165, 223, 235),
 }
 
 OUTCOME_LABEL = {
@@ -134,7 +134,7 @@ def _glow_sprite(radius: int, color, peak: int = 200, steps: int = 20) -> "pygam
     surf = pygame.Surface((2 * r, 2 * r), pygame.SRCALPHA)
     for k in range(steps, 0, -1):
         f = k / steps
-        a = int(peak * f * f)
+        a = int(peak * (1.0 - f) ** 2)
         pygame.draw.circle(surf, (*color, a), (r, r), int(r * f))
     return surf
 
@@ -196,9 +196,9 @@ class _Scene:
         px, py = arena.portal
         self.spawn_d = float(np.hypot(px - sx, py - sy))
         try:
-            self.font = pygame.font.SysFont("dejavusansmono", 24, bold=True)
-            self.font_sm = pygame.font.SysFont("dejavusansmono", 19)
-            self.font_big = pygame.font.SysFont("dejavusansmono", 54, bold=True)
+            self.font = pygame.font.SysFont("dejavusans", 28, bold=True)
+            self.font_sm = pygame.font.SysFont("dejavusansmono", 21)
+            self.font_big = pygame.font.SysFont("dejavusans", 54, bold=True)
         except Exception:                               # pragma: no cover
             self.font = self.font_sm = self.font_big = pygame.font.Font(None, 24)
 
@@ -217,7 +217,15 @@ class _Scene:
             k = 0.0 if y1 == y0 else (f - y0) / (y1 - y0)
             col = tuple(int(c0[j] + (c1[j] - c0[j]) * k) for j in range(3))
             pygame.draw.line(self.static, col, (0, y), (W, y))
-        # god rays: blurred warm wedges fading out toward the floor (they used
+        # A diffused moon anchors the depth; it never changes collision geometry.
+        moon_x, moon_y = int(W * .70), int(H * .24)
+        halo = _glow_sprite(int(H * .21), (152, 218, 232), peak=100, steps=48)
+        self.static.blit(halo, (moon_x - halo.get_width() // 2,
+                               moon_y - halo.get_height() // 2))
+        pygame.draw.circle(self.static, (183, 222, 221), (moon_x, moon_y), int(H * .048))
+        pygame.draw.circle(self.static, (208, 236, 225), (moon_x - 8, moon_y - 9),
+                           int(H * .032))
+        # god rays: blurred cool wedges fading out toward the floor (they used
         # to be hard-edged triangles that read as flat geometry, not light)
         def rays(d):
             cx = W * 0.5
@@ -243,6 +251,27 @@ class _Scene:
                 d.polygon(list(zip(xs, ys)) + [(W + 60, H), (-60, H)],
                           fill=(*col, a))
         self.static.blit(_pil_to_pygame(_blur_layer((W, H), hills, 11)), (0, 0))
+        # Distant trunks and their branching silhouettes sit behind every platform.
+        def woodland(d):
+            rng = np.random.default_rng(107)
+            for depth, count in ((0, 19), (1, 11)):
+                for x in np.linspace(-40, W + 40, count):
+                    x += rng.uniform(-35, 35)
+                    base = H * rng.uniform(.64, .94)
+                    top = H * rng.uniform(.08, .3)
+                    lean = rng.uniform(-80, 80)
+                    width = int(rng.uniform(8, 17) * (depth + 1))
+                    color = (19, 49, 65, 55 + depth * 35)
+                    d.polygon([(x - width, base), (x + width, base),
+                               (x + lean + 4, top), (x + lean, top)], fill=color)
+                    for branch in range(3):
+                        y = top + (base - top) * (.16 + branch * .17)
+                        direction = -1 if branch % 2 else 1
+                        d.line([(x + lean * .6, y + 80),
+                                (x + direction * 70, y),
+                                (x + direction * 105, y - 75)], fill=color,
+                               width=max(2, width // 3))
+        self.static.blit(_pil_to_pygame(_blur_layer((W, H), woodland, 4)), (0, 0))
         # canopy: ONE organic mass hanging from the top edge with vines, built
         # blurred so it reads as out-of-focus foliage. The old version was two
         # layers of near-black circles over the whole arena and looked like
@@ -489,40 +518,51 @@ class _Scene:
     def _hud(self, surf, frames, i, label, ev, ch):
         import pygame
         P = _PAL
-        pad, h = 12, 62
+        pad, h = 24, 104
         panel = pygame.Surface((self.W, h), pygame.SRCALPHA)
-        panel.fill((*P["hud"], 178))
-        pygame.draw.line(panel, (60, 96, 120, 220), (0, h - 2), (self.W, h - 2), 2)
+        panel.fill((*P["hud"], 226))
+        pygame.draw.line(panel, (66, 111, 127, 220), (pad, h - 2), (self.W - pad, h - 2), 1)
         surf.blit(panel, (0, 0))
-        surf.blit(self.font.render(label, True, P["hud_text"]), (pad, 7))
+        surf.blit(self.font_sm.render("ORI / FIELD OBSERVATORY", True, P["portal"]), (pad, 12))
+        label_image = self.font.render(label, True, P["hud_text"])
+        max_label_width = int(self.W * .62) - pad * 2
+        if label_image.get_width() > max_label_width:
+            ratio = max_label_width / label_image.get_width()
+            label_image = pygame.transform.smoothscale(label_image,
+                (max_label_width, max(1, int(label_image.get_height() * ratio))))
+        surf.blit(label_image, (pad, 40))
         d = float(np.hypot(ev[0] - ch[0], ev[1] - ch[1]))
         agg = frames[i]["ev_agg"]
-        stats = (f"t={frames[i]['t']:4d}  dist={d:4.0f}  "
-                 f"dash={int(agg[0]):3d}  walljump={int(agg[1]):2d}  "
-                 f"djump={int(agg[2]):2d}  bash={int(agg[3]):2d}")
-        surf.blit(self.font_sm.render(stats, True, P["hud_dim"]), (pad, 34))
+        stats = (f"STEP {frames[i]['t']:04d}  /  GAP {d:.0f}px  /  "
+                 f"DASH {int(agg[0])}  WALL {int(agg[1])}  "
+                 f"JUMP {int(agg[2])}  BASH {int(agg[3])}")
+        surf.blit(self.font_sm.render(stats, True, P["hud_dim"]), (pad, 76))
         # portal progress bar
         px, py = float(self.arena.portal[0]), float(self.arena.portal[1])
         prog = 1.0 - float(np.hypot(px - ev[0], py - ev[1])) / max(self.spawn_d, 1.0)
         prog = min(1.0, max(0.0, prog))
-        bw, bh = int(self.W * 0.30), 12
-        bx, by = self.W - bw - pad, 22
+        bw, bh = int(self.W * 0.30), 8
+        bx, by = self.W - bw - pad, 57
         pygame.draw.rect(surf, (20, 38, 54), (bx, by, bw, bh), border_radius=6)
         pygame.draw.rect(surf, P["portal"], (bx, by, int(bw * prog), bh), border_radius=6)
         pygame.draw.rect(surf, (70, 110, 140), (bx, by, bw, bh), 1, border_radius=6)
-        surf.blit(self.font_sm.render("PORTAL", True, P["hud_dim"]), (bx, by - 16))
+        surf.blit(self.font_sm.render(f"PORTAL PROXIMITY / {prog:.0%}", True, P["hud_dim"]), (bx, 21))
+        for fraction in (.25, .5, .75):
+            tick_x = bx + int(bw * fraction)
+            pygame.draw.line(surf, P["hud"], (tick_x, by), (tick_x, by + bh), 2)
 
     def _banner(self, surf, outcome, t):
         import pygame
         col = _PAL["good"] if outcome in ("escaped", "ch_hazard") else _PAL["bad"]
         txt = OUTCOME_LABEL.get(outcome, outcome.upper())
-        sub = f"{txt}  ·  {t} steps  ·  {t / 60:.1f}s"
-        y = self.H // 2 - 40
-        band = pygame.Surface((self.W, 80), pygame.SRCALPHA)
-        band.fill((6, 12, 22, 190))
+        y = self.H // 2 - 76
+        band = pygame.Surface((self.W, 152), pygame.SRCALPHA)
+        band.fill((6, 18, 28, 222))
         surf.blit(band, (0, y))
-        img = self.font_big.render(sub, True, col)
-        surf.blit(img, (self.W // 2 - img.get_width() // 2, y + 12))
+        img = self.font_big.render(txt, True, col)
+        surf.blit(img, (self.W // 2 - img.get_width() // 2, y + 28))
+        detail = self.font_sm.render(f"REPLAY COMPLETE  /  {t} steps  /  {t / self.mp.step_hz:.1f}s", True, _PAL["hud_dim"])
+        surf.blit(detail, (self.W // 2 - detail.get_width() // 2, y + 103))
 
 
 def _draw_terrain(surf, grid: np.ndarray, mp: MoveParams):
