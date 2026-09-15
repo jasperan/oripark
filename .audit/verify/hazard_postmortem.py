@@ -55,6 +55,11 @@ def main():
     ap.add_argument("--arena-seed0", type=int, default=9000)
     ap.add_argument("--history", type=int, default=24)
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--opp-patch", default=None,
+                    help="up,down patch rows for the frozen CHASER so it keeps "
+                         "its native obs geometry while the evader's window "
+                         "changes; without it the measured deaths reflect a "
+                         "shifted, differently-playing opponent")
     args = ap.parse_args()
 
     tp, mp, ep = load_run_params(args.run)
@@ -77,9 +82,14 @@ def main():
 
     ev = load_ev(args.evader, "evader", tp, mp, ep)
     N = args.n_envs
+    opp_ep = cep
+    if args.opp_patch:
+        from dataclasses import replace as _rep
+        u, d = (int(x) for x in args.opp_patch.split(","))
+        opp_ep = _rep(cep, patch_up=u, patch_down=d)
     env = OriArenaVecEnv("evader", N, sampler, mp, ep,
                          opponent=frozen_policy(ch.policy, deterministic=False),
-                         seed=12345)
+                         seed=12345, opp_ep=opp_ep)
     obs = env.reset()
     t = float(mp.tile)
     hist = np.zeros((N, args.history, 2), dtype=np.int64)   # agent cell history
