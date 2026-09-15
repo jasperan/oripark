@@ -14,25 +14,52 @@ trained by a **self-play league of two adversarial neural-network policies**
 (an agile evader vs a pursuer), with a **third adversarial learner** (a CEM
 level generator) that keeps the curriculum at the edge of the agents' skill.
 
-> **Untrained vs trained evader, same arena, same chaser** (untrained
-> wanders and times out; the trained evader escapes through the light
-> portal in ~4 seconds):
+> **Untrained vs trained evader, same arena, same frozen chaser** (the
+> trained clip escapes through the portal, the untrained one impales itself):
 >
-> ![improvement](docs/media/evader_improvement.gif) *(trained evader, run19 b270 — escapes; untrained flails)*
+> ![improvement](docs/media/evader_improvement.gif)
 >
-> Trained-evader escape rate vs **frozen stochastic chasers** on
-> expert-winnable hard arenas (100 matches, seeded draws, cross-chaser
-> matrix, reproducible protocol in `hardarena.py`): **run19 trained
-> escapes 44% vs run17's chaser (old arch: 31%), 62% vs the weakest
-> chaser** — and the true random floor, measured as a K=6 population, is
-> **4-8%, not the 17-45% single lucky inits suggested**. See
-> [docs/RESULTS.md](docs/RESULTS.md), the
-> [progress curve](docs/media/progress_curve_v4.png), and the
-> [tournament with recorded videos](docs/tournament.md).
+> ### Measurement status — read [docs/VERIFICATION.md](docs/VERIFICATION.md)
 >
-> The renderer is painterly Ori-style: warm god-light sky, parallax
-> foliage, grass-topped terrain, glowing orbs/portal, luminous spirit
-> agents, drifting fireflies and a soft vignette.
+> A full verification pass re-ran every claim here and found three defects that
+> invalidated the published results: agents could **climb in mid-air**
+> (`wall_dir` was never cleared and wall climb/jump/slide never tested for
+> actual contact), the arena oracle tested a **panicking** expert (it was
+> handed its own position as the chaser), and every "random"/"untrained"
+> baseline loaded `pool_ev_0.pt`, which is an early **trained** pool snapshot
+> (the league trims its pool with `pop(0)`), not an init. All three are fixed
+> and regression-tested.
+>
+> Verified table — fixed physics, 310 expert-winnable hard arenas, stochastic
+> frozen chaser, 100 seeded matches, each policy fed the observation convention
+> it was trained in, opponent = `run21_fixed`'s chaser (the only pursuer here
+> trained against an evader that cannot fly):
+>
+> | evader | vs run21 chaser | vs run17 chaser | mean zone of 12 |
+> |---|---:|---:|---:|
+> | scripted expert (privileged BFS, no NN) | **54.5%** | 27.7% | 10.5 |
+> | **run21 trained** (fixed physics, 300 blocks) | **40%** | **41%** | 10.1 |
+> | run17 / run19 / run20 trained (pre-fix physics) | 29% / 29% / 30% | 21% / 14% / 15% | 8.0-8.3 |
+> | DAgger distillation of the expert (no RL) | 29% | — | 8.8 |
+> | BC / init policy (per run) | 7-19% | 0-17% | 5.8-7.9 |
+> | fresh random init | **0%** (5 inits, 500 episodes) | — | ~2 |
+>
+> So: learning to escape is real and large (0% → 40%), the fixed-physics
+> retrain is the strongest and most chaser-robust policy in the repo, the
+> previously published 44%/57% are retracted, and the scripted expert remains
+> chaser-dependent (27.7% vs 54.5%) where the learned evader is not.
+>
+> Reproduce a row with, e.g.:
+> `python hardarena.py --run results/run21_fixed --chaser-run results/run17 --matches 100 --chaser stoch --set 07 --expert --legacy-obs-chaser`
+>
+> The renderer is painterly Ori-style: blurred god-light, a vine-hung canopy,
+> parallax hills, moss-capped rock with drop shadows, glowing orbs, a gate
+> portal with a light column, luminous spirit agents with comet trails,
+> drifting fireflies, and a HUD with portal progress and an end-of-clip
+> outcome banner. All clips are labelled with the policy they actually show
+> (the old "UNTRAINED" panel was an early *trained* pool snapshot) and end on
+> the outcome: see
+> [renderer before/after](docs/media/render_before_after.png).
 
 ```
               ┌─────────────────────────────────────────────────┐

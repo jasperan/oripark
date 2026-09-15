@@ -25,6 +25,19 @@ class Elo:
         return self.rating
 
 
+def elo_pair_update(elo_a: "Elo", elo_b: "Elo", score_a: float) -> None:
+    """Update both ratings from the SAME pre-update snapshot.
+
+    Updating B against A's already-updated rating leaks a fraction of A's
+    change into B, so the pair's rating sum drifts upward every game
+    (~+0.7/game at K=32 for a balanced match) and absolute Elo levels are
+    not comparable across blocks.
+    """
+    r_a, r_b = elo_a.rating, elo_b.rating
+    elo_a.update(r_b, score_a)
+    elo_b.update(r_a, 1.0 - score_a)
+
+
 class Metrics:
     """Collects per-block aggregates and writes JSONL + plots."""
 

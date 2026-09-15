@@ -486,9 +486,13 @@ def collect_demos(env, scripted, n_episodes: int, max_steps: int,
                                chaser_x=cx, chaser_y=cy))
         acts = np.stack(acts)
         total_waves += 1
+        pre_obs = obs          # the state the action was chosen in
         obs, _, done, infos = env.step(acts)
         for i in range(N):
-            ep_obs[i].append(obs[i])
+            # labels must be aligned with the observation they answer: this
+            # used to append the POST-step obs, i.e. every (obs, act) pair was
+            # off by one step
+            ep_obs[i].append(pre_obs[i])
             ep_act[i].append(acts[i])
             ep_steps[i] += 1
             if done[i] or ep_steps[i] >= max_steps:
@@ -500,6 +504,93 @@ def collect_demos(env, scripted, n_episodes: int, max_steps: int,
                 ep_steps[i] = 0
     return obs_buf, act_buf, {"episodes": n_done, "pairs": total,
                               "waves": total_waves}
+
+
+def expert_winnable_probe(arenas, mp, ep, n, max_steps=None, batch=16):
+    """Calm-oracle filter usable from probe scripts (the env-side oracle lives
+    in hardarena.expert_winnable; this is the same protocol, kept local so the
+    audit scripts do not import the CLI module). Returns up to n arenas the
+    scripted expert escapes with the chaser parked."""
+    from .env import OriArenaVecEnv
+    max_steps = max_steps or ep.max_steps
+
+    class Fix:
+        def __init__(self, chunk):
+            self.chunk = chunk
+
+        def sample(self, m):
+            return [self.chunk[k % len(self.chunk)] for k in range(m)]
+
+    ok = []
+    for s0 in range(0, len(arenas), batch):
+        chunk = arenas[s0:s0 + batch]
+        env = OriArenaVecEnv("evader", len(chunk), Fix(chunk), mp, ep, seed=0,
+                             chaser_ghost=True)
+        act = expert_act_fn(env)
+        obs = env.reset()
+        alive = np.ones(len(chunk), dtype=bool)
+        for _ in range(max_steps):
+            obs, _, done, infos = env.step(act(obs))
+            for i, info in enumerate(infos):
+                if "episode" in info and alive[i]:
+                    alive[i] = False
+                    if info["outcome"] == "escaped":
+                        ok.append(chunk[i])
+            if not alive.any():
+                break
+        env.close()
+        if len(ok) >= n:
+            break
+    return ok[:n]
+
+
+def expert_act_fn(env):
+    """VecEnv-compatible act_fn driving ScriptedEvader agents from privileged
+    state (used to measure the scripted expert on the same protocol as the
+    learned policies, and as a DAgger teacher)."""
+    n = env.n_envs
+    experts = [ScriptedEvader(env.p, env.ep) for _ in range(n)]
+
+    def act(_obs):
+        acts = []
+        ph = env.phys
+        for i in range(n):
+            ar = env.arenas[i]
+            if env.t[i] == 0:
+                experts[i].reset(ar)
+            ci = n + i
+            acts.append(experts[i].act(
+                ar, ph.x[i], ph.y[i], ph.vx[i], ph.vy[i], ph.on_ground[i],
+                ph.wall_dir[i], ph.can_djump[i], ph.can_dash[i], ph.dash_t[i],
+                ph.bash_cd[i], ph.facing[i], chaser_x=ph.x[ci], chaser_y=ph.y[ci]))
+        return np.stack(acts)
+
+    return act
+
+
+def scripted_chaser_act_fn(env):
+    """VecEnv-compatible act_fn driving ScriptedChaser agents from privileged
+    state (the frozen non-suicidal pursuer: a stable benchmark opponent, and a
+    contrast to the learned chasers that impale themselves on spikes in 19-43%
+    of episodes). Chasers occupy indices N..2N-1, the evader at i."""
+    n = env.n_envs
+    hunters = [ScriptedChaser(env.p, env.ep) for _ in range(n)]
+
+    def act(_obs):
+        acts = []
+        ph = env.phys
+        for i in range(n):
+            ar = env.arenas[i]
+            if env.t[i] == 0:
+                hunters[i].reset(ar)
+            ci = n + i
+            acts.append(hunters[i].act(
+                ar, ph.x[ci], ph.y[ci], ph.vx[ci], ph.vy[ci], ph.on_ground[ci],
+                ph.wall_dir[ci], ph.can_djump[ci], ph.can_dash[ci], ph.dash_t[ci],
+                ph.facing[ci], evader_x=ph.x[i], evader_y=ph.y[i]))
+        return np.stack(acts)
+
+    return act
 
 
 if __name__ == "__main__":

@@ -17,7 +17,8 @@ from .arena import Arena, ArenaGenerator
 class TerrainAdversary:
     def __init__(self, gen: ArenaGenerator, rng: np.random.Generator,
                  pop: int = 8, elites: int = 4, sigma0: float = 0.30,
-                 target_wr: float = 0.50, lo: float = 0.0, hi: float = 1.0):
+                 target_wr: float = 0.50, lo: float = 0.0, hi: float = 1.0,
+                 sigma_floor: float = 0.05, mu0=None):
         self.gen = gen
         self.rng = rng
         self.dim = 6
@@ -25,7 +26,9 @@ class TerrainAdversary:
         self.elites = elites
         self.target_wr = target_wr
         self.lo, self.hi = lo, hi
-        self.mu = np.array([0.15, 0.15, 0.05, 0.2, 0.2, 0.05], dtype=np.float32)
+        self.sigma_floor = float(sigma_floor)
+        self.mu = (np.asarray(mu0, dtype=np.float32) if mu0 is not None
+                   else np.array([0.15, 0.15, 0.05, 0.2, 0.2, 0.05], dtype=np.float32))
         self.easy_mu = self.mu.copy()          # easy-start fallback for the reset rule
         self.max_step = 0.12                   # per-update mu move cap
         self.sigma = np.full(self.dim, sigma0, dtype=np.float32)
@@ -68,7 +71,7 @@ class TerrainAdversary:
         if np.max(wrs) < 0.25 and self.rng.random() < 0.5:
             # unwinnable population: drift back toward easy levels
             self.mu = 0.6 * self.mu + 0.4 * self.easy_mu
-            self.sigma = np.clip(self.sigma * 0.9, 0.05, 0.35).astype(np.float32)
+            self.sigma = np.clip(self.sigma * 0.9, self.sigma_floor, 0.35).astype(np.float32)
             rec = {"mu": self.mu.copy(), "sigma": self.sigma.copy(),
                    "wr_mean": float(wrs.mean()), "wr_std": float(wrs.std()),
                    "elite_wr": float(wrs[idx].mean()), "reset_easy": True}
@@ -83,7 +86,7 @@ class TerrainAdversary:
         # curriculum never random-walks into an exploded search distribution
         new_sigma = 0.8 * self.sigma + 0.2 * elites.std(axis=0)
         self.mu = new_mu.astype(np.float32)
-        self.sigma = np.clip(new_sigma, 0.05, 0.35).astype(np.float32)
+        self.sigma = np.clip(new_sigma, self.sigma_floor, 0.35).astype(np.float32)
         rec = {
             "mu": self.mu.copy(), "sigma": self.sigma.copy(),
             "wr_mean": float(wrs.mean()), "wr_std": float(wrs.std()),
@@ -106,3 +109,21 @@ class StaticSampler:
 
     def mean_params(self) -> np.ndarray:
         return self.params
+
+
+class FixedListSampler:
+    """Replays an already-generated arena list (identical arenas every call).
+
+    Needed for comparable per-block Elo: re-drawing arenas per block adds
+    arena-sampling noise to the curve.
+    """
+
+    def __init__(self, arenas: list[Arena]):
+        assert arenas, "FixedListSampler needs at least one arena"
+        self.arenas = list(arenas)
+
+    def sample(self, n: int) -> list[Arena]:
+        return [self.arenas[k % len(self.arenas)] for k in range(n)]
+
+    def mean_params(self) -> np.ndarray:
+        return np.asarray(self.arenas[0].params, dtype=np.float32)

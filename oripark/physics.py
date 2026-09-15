@@ -216,9 +216,18 @@ class OriPhysics:
         if np.any(move_x != 0):
             self.facing = np.where(move_x != 0, move_x, self.facing)
 
-        # --- WotW wall climb: press INTO a wall while touching it to climb up
-        # (no jump needed). Wall jump still fires on jump press. This is the
-        # signature WotW movement our wall-jump-only model was missing.
+        # --- wall contact is re-derived from the tiles every substep; it is
+        # NEVER carried over from an earlier collision. A sticky wall_dir let
+        # an airborne agent climb / wall-jump / wall-slide in open air after a
+        # single wall touch anywhere (measured: 170 px/s ascent with the
+        # nearest solid 99 tiles away), which made every movement metric
+        # non-physical.
+        self.wall_dir = self._wall_contact()
+
+        # --- WotW wall climb: press INTO a wall that is actually beside the
+        # body to climb up (no jump needed). Wall jump still fires on jump
+        # press. This is the signature WotW movement our wall-jump-only model
+        # was missing.
         toward_wall = (self.wall_dir != 0) & (move_x == self.wall_dir)
         climbing = toward_wall & (~dashing) & (~self.died) & self.can_climb
 
@@ -324,6 +333,26 @@ class OriPhysics:
         rows = np.arange(self.n)[:, None]
         return g[rows, flat]
 
+    def _wall_contact(self) -> np.ndarray:
+        """-1/0/+1 wall side actually beside the agent's body this substep.
+
+        Probes head/center/feet at each side, with the same "the floor is not
+        a wall" rule used by horizontal collision so a grounded agent can run
+        along its own floor.
+        """
+        p = self.p
+        ys = np.stack([self.y - p.half_h, self.y, self.y + p.half_h], axis=1)
+        under = self._probe_y(self.x, self.y + p.half_h + 1.0) == SOLID
+        sides = (self.x - (p.half_w + 1.0), self.x + (p.half_w + 1.0))
+        solid = []
+        for ex in sides:
+            xs = np.repeat(ex[:, None], 3, axis=1)
+            pr = self._probe_cells(xs, ys)
+            pr[:, 2] = np.where(under, 0, pr[:, 2])     # floor != wall
+            solid.append(np.any(pr == SOLID, axis=1))
+        left, right = solid
+        return np.where(right, 1, np.where(left, -1, 0)).astype(np.int8)
+
     def _integrate_x(self, dt: float):
         p = self.p
         hw = p.half_w
@@ -359,12 +388,6 @@ class OriPhysics:
             if np.any(hit & (self.dash_t > 0)):
                 self.dash_t[hit & (self.dash_t > 0)] = 0.0
         self.x = nx
-        # wall probe when airborne and not moving horizontally
-        idle = (~self.on_ground) & (np.abs(self.vx) < 1e-3)
-        if np.any(idle):
-            l = self._probe_y(self.x - hw - 1.0, self.y)
-            r = self._probe_y(self.x + hw + 1.0, self.y)
-            self.wall_dir[idle] = np.where(r[idle] == SOLID, 1, np.where(l[idle] == SOLID, -1, 0)).astype(np.int8)
 
     def _integrate_y(self, dt: float):
         p = self.p

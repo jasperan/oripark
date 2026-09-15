@@ -1,9 +1,27 @@
 """Replay recording + rendering for the Ori tag game.
 
-Runs an episode with fixed policies (deterministic), records positions and
-actions, then renders headless-pygame frames into a GIF (or ASCII frames
-for the terminal). `--mode before` uses the untrained pool-0 snapshot so
-you can watch a random agent; `--mode after` uses the trained policy.
+Runs an episode with fixed policies, records positions and actions, then
+renders headless-pygame frames into a GIF (or ASCII frames for the terminal).
+`--mode before` uses the untrained pool-0 snapshot so you can watch a random
+agent; `--mode after` uses the trained policy.
+
+Visual language (kept deliberately legible — these GIFs are the evidence for
+"the agent got better", so the play space must stay readable):
+
+  * moonlit blue-green sky, layered forest silhouettes, a distant canopy confined to the top band
+    (it used to be two layers of near-black blobs over the whole arena, which
+    buried the platforms and the agents),
+  * terrain drawn as merged rock masses with a mossy cap instead of
+    per-tile bricks with grid lines,
+  * agents as luminous spirits with a short comet trail, the chaser in
+    crimson so threat reads at a glance,
+  * spikes as a sharp magenta hazard strip, orbs as warm bash anchors,
+    the portal as a tall swirling gate with a light column,
+  * an observation HUD with portal proximity and the agility counters.
+
+`deterministic` controls the RECORDED policy; `chaser_deterministic` controls
+the frozen chaser independently (they used to share one flag, which silently
+made every demo chaser stochastic).
 """
 from __future__ import annotations
 
@@ -30,12 +48,15 @@ class SingleArenaSampler:
 
 class ReplayRecorder:
     def __init__(self, arena: Arena, ev_pol, ch_pol, mp: MoveParams, ep: EnvParams,
-                 deterministic: bool = True, seed: int = 0):
+                 deterministic: bool = True, seed: int = 0,
+                 chaser_deterministic: bool = True):
         self.mp, self.ep = mp, ep
         self.det = deterministic
+        self.chaser_det = chaser_deterministic
         sampler = SingleArenaSampler(arena)
         self.env = OriArenaVecEnv("evader", 1, sampler, mp, ep,
-                                  opponent=frozen_policy(ch_pol, deterministic), seed=seed)
+                                  opponent=frozen_policy(ch_pol, chaser_deterministic),
+                                  seed=seed)
         self.ev_pol = ev_pol
 
     def run(self, max_steps: int = 1500) -> tuple[list, str]:
@@ -44,8 +65,22 @@ class ReplayRecorder:
         outcome = "timeout"
         ph = self.env.phys
         for t in range(max_steps):
+            pre = (float(ph.x[0]), float(ph.y[0]), float(ph.x[1]), float(ph.y[1]))
             a = self.ev_pol.predict(obs, deterministic=self.det)[0]
             obs, _, done, infos = self.env.step(a)
+            if done[0]:
+                # the vec env auto-resets on the terminal step, so record the
+                # PRE-step positions: otherwise every GIF ends on the respawn
+                outcome = infos[0].get("outcome", "timeout")
+                frames.append({
+                    "t": t, "ev": (pre[0], pre[1]), "ch": (pre[2], pre[3]),
+                    "ev_act": np.array([2, 0, 0, 0, 0], dtype=np.int32),
+                    "ch_act": np.zeros(3, dtype=np.int32),
+                    "ev_agg": self.env.ev_agg[0].copy(),
+                    "ch_agg": self.env.ch_agg[0].copy(),
+                    "terminal": outcome,
+                })
+                break
             frames.append({
                 "t": t,
                 "ev": (float(ph.x[0]), float(ph.y[0])),
@@ -54,6 +89,7 @@ class ReplayRecorder:
                 "ch_act": self.env.prev_full[1].copy(),
                 "ev_agg": self.env.ev_agg[0].copy(),
                 "ch_agg": self.env.ch_agg[0].copy(),
+                "terminal": None,
             })
             if done[0]:
                 outcome = infos[0].get("outcome", "timeout")
@@ -562,7 +598,8 @@ def _draw_frame(surf, frames, i, label: str, mp: MoveParams):
 
 
 def make_gif(frames: list, arena: Arena, mp: MoveParams, out_path: str,
-             label: str = "", scale: float = 0.5, fps: int = 30, step: int = 2) -> str:
+             label: str = "", scale: float = 0.5, fps: int = 30, step: int = 2,
+             colors: int = 160) -> str:
     """Render frames headlessly with pygame and assemble a GIF with PIL."""
     import pygame
     from PIL import Image
@@ -585,10 +622,11 @@ def make_gif(frames: list, arena: Arena, mp: MoveParams, out_path: str,
         img = Image.frombytes("RGB", (W, H), arr)
         if scale != 1.0:
             img = img.resize((int(W * scale), int(H * scale)), Image.LANCZOS)
-        imgs.append(img.convert("P", palette=Image.ADAPTIVE, colors=160))
+        imgs.append(img.convert("P", palette=Image.ADAPTIVE, colors=colors))
     os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    dur = int(1000 / fps)
     imgs[0].save(out_path, save_all=True, append_images=imgs[1:],
-                 duration=int(1000 / fps), loop=0)
+                 duration=[dur] * (len(imgs) - 1) + [dur * 14], loop=0)
     pygame.quit()
     return out_path
 

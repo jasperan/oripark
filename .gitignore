@@ -23,3 +23,4 @@ demo_*.gif
 .DS_Store
 .idea/
 .vscode/
+.ckg/

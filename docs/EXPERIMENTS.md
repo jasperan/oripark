@@ -1,5 +1,11 @@
 # Experiments log
 
+> **E14, E15 and E16 are retracted** — see [E17](#e17--verification-pass-fixes-physics-oracle-and-the-metric-retracts-e14e15e16)
+> and [VERIFICATION.md](VERIFICATION.md). They were measured under a movement
+> bug that let agents climb in mid-air and with an arena oracle that tested a
+> panicking expert, and every headline number they report reproduces only under
+> that bug. E17 records the fixes and the first legitimate training run.
+
 Running log of improvement experiments (hypothesis → change → measured
 result). The goal: a professional-grade evader that reliably reaches the
 portal.
@@ -231,3 +237,233 @@ portal.
 - **Retraction**: the "chaos is strong — random escapes 17-27%" framing
   in earlier docs (E13, Round-4 tuning) measured a single lucky draw per
   run, not the floor. Single-init baselines are retired from the metric.
+
+
+## E17 — verification pass: fixes physics, oracle and the metric; retracts E14/E15/E16
+
+**Hypothesis**: the published improvement runs (E14/E15) measure movement
+skill. **Method**: re-run every claim from a clean checkout — pytest-style
+probes, an A/B harness over two physics builds with identical seeded draws,
+and a re-evaluation of the saved policies.
+
+**Three defects, all fixed and regression-tested:**
+
+1. **Free flight (physics).** `wall_dir` was written on a leading-edge
+   collision and cleared only by a probe requiring `|vx| < 1e-3`, and wall
+   climb / wall jump / wall slide never tested for contact — so an airborne
+   agent holding that direction rose at `climb_speed` (170 px/s) anywhere.
+   A probe climbed with the nearest solid tile 99 tiles away; a trained run19
+   evader did it for 9,856 steps across 40 environments. Fix: `_wall_contact()`
+   re-derives the wall side from head/centre/feet probes every substep.
+   *A/B, one shared arena set, 100 seeded matches, identical draws:*
+   run17 31%→26%, **run19 44%→20%**, run19-vs-own 38%→26%, **run20 57%→35%**.
+
+2. **Panic-mode oracle (arena filter).** `expert_winnable()` fed the scripted
+   expert its own position as `chaser_x/chaser_y`, pinning `flee=True` for the
+   whole episode, while a random chaser wandered the test arena. The documented
+   "an arena only counts if a competent player can win it" admitted 90/600
+   hard arenas, not ~half. Fix: `--oracle calm` parks the chaser and feeds the
+   real position → 310/600.
+
+3. **Metric denominators.** The metric tool (`hardarena.py`) had a fourth copy
+   of the episode loop and computed `tm = n - escaped - caught`, so both hazard
+   outcomes were reported as "timeout", and it printed `esc/args.matches`
+   beside a rate computed over `esc/n_done`. Fix: every entrant now goes
+   through `oripark.evals.play_episodes`, artifacts carry five outcome columns
+   that sum to `n`, plus `survival` and `mean zone`.
+
+**Measured result (corrected protocol — fixed physics, 310 calm-oracle arenas,
+stochastic frozen chaser, 100 seeded matches):**
+
+| entrant | escape | survival | ev_hazard | mean zone |
+|---|---:|---:|---:|---:|
+| scripted expert (privileged) | 56% | 66% | 0 | 12.7 |
+| run17 trained | 38% | 59% | 33 | 10.6 |
+| run19 trained | 33% | 57% | 27 | 10.0 |
+| run20 trained | 30% | 62% | 18 | 11.0 |
+| random init | 37% | 59% | 34 | 10.2 |
+| BC-pretrained | 1-4% | 58% | 35 | 5.9 |
+
+**Retractions.** E14's "+13 pt architectural gain" and E15's "the gain
+generalizes" do not survive: run19 depended on the exploit ~2.4x more than
+run17 and lands *below* it. E16's "random floor is 4-8%, trained beats it by
++27 to +49" is a property of the old oracle: on the corrected arena set a
+random init escapes ~37%, i.e. the pre-fix trained policies are at
+random-init level. Also retracted as unsupported: the BC NLL 0.15 figure
+(nothing persists it), the run19 peak Elo (actual 1364.2 @ b63, not 1352 @
+b61), the run20 matrix cell (artifact says 57%, docs said 54%), and
+`selected.txt`'s protocol lines (hand-written; `select.py` cannot emit them).
+
+**New bottleneck.** The frozen chasers now catch only 7-27% of episodes —
+they were trained against evaders that could fly. Escape rates are therefore
+partly "can you avoid the spikes and drift to the portal", and the honest
+opponent is a chaser retrained under fixed physics. `run21_fixed` is that run
+(run19's exact recipe, 300 blocks, seed 3, fixed physics); its results are
+appended below when it completes.
+
+## E18 — the "random" baseline was a trained snapshot (bug, FIXED)
+- `pool_ev_0.pt` was loaded as "random"/"untrained" by hardarena, eval,
+  progress, tournament and the hero GIF's UNTRAINED panel. It is neither: the
+  league trims its pool front (`ev_pool.pop(0)`) once it exceeds `pool_size`,
+  and the final save writes `pool_ev_{i}` from the trimmed list, so
+  `pool_ev_0` is the oldest *surviving trained* snapshot.
+- Evidence: weight L2 norm 77-92 vs 46 for a fresh init (finished policy:
+  73-92); escape rate 18-42% on hard arenas where five fresh inits escape
+  **0.0%** (500 episodes).
+- This also explains E13/E16's "each run's init was a chaos-lucky draw" — the
+  files it measured were early trained snapshots. The "true random floor"
+  table was built with a trained policy as member 0.
+- **Fix**: `selfplay.py` writes `pool_ev_boot.pt`/`pool_ch_boot.pt` at startup;
+  `oripark/baselines.py` resolves the pre-training checkpoint and labels
+  `pool_ev_0` honestly; `hardarena --random-seeds K` builds K fresh inits; a
+  test pins the norm relationship so the mislabel cannot silently return.
+
+## E19 — DAgger distillation of the scripted expert (POSITIVE)
+- Hypothesis: plain BC fails because the teacher is *privileged* (BFS planner
+  + exact state), so the student must be trained on states it actually visits.
+  Measured BC result before this: a 56% teacher distils into a 1-4% student
+  (8-19% in its own obs convention) that never leaves the first third of the
+  arena (zone 5.8-6.9 of 12).
+- Change: `oripark/dagger.py` — roll the student out, label every visited
+  state with the expert's action, train on those labels, with a decaying
+  expert mixing rate beta (1.0 -> 0.0 over 4-6 rounds). Also fixed the demo
+  collector pairing each action with the *next* observation.
+- **Result**: distillation alone (no RL, ~20 minutes) reaches **29%** escape
+  against the competence-restored chaser, versus 7-19% for BC and 29-30% for
+  the pre-fix PPO runs. Pure-student rollouts at beta=0 escape 69% on the
+  traversal arenas. The pursued variant (teacher sees a real chaser) is much
+  stronger than the ghost variant (29% vs 20%) — evasion must be demonstrated.
+- `train.py --init-evader <ckpt>` warm-starts PPO from it (run22).
+
+## E20 — first legitimate training run (run21_fixed, POSITIVE)
+- run19's exact recipe (300 blocks, 384² net, lr 4e-4, seed 3) re-run under
+  the fixed physics, so both sides learn a game where flying is impossible.
+- **Result**: 40% escape against its own chaser and 41% against run17's —
+  chaser-robust, versus the pre-fix runs at 29-30% and a fresh random init at
+  0%. The scripted expert swings 27.7-54.5% depending on the opponent, so
+  against the legacy chaser the learned policy is *better* than the expert.
+- Its chaser is the first competent pursuer in the repo (catches the expert in
+  50% of episodes), but it still dies on spikes in 19-43% of episodes — the
+  chaser-side failure modes are the next lever.
+
+## E21 — DAgger scaling, and the chaser side (mixed)
+- **Scaling the evader distillation works.** Same method, more data:
+  ghost teacher 20% -> pursued-vs-snapshot teacher 24% -> pursued-vs-final-chaser
+  teacher, 8 rounds x 96 eps, 25.5k pairs: **30.7%** escape (100 matches vs
+  run21's chaser), i.e. the distillation alone now beats every pre-fix PPO run
+  (29-30%) and sits at 56% of the scripted expert's 54.5%. Pure-student
+  rollouts (beta=0, no expert help) escape 37.5% against the same chaser.
+- **The chaser-side distillation fixes suicide but is too weak to use.**
+  Learned chasers die on spikes in 19-43% of episodes, handing the evader wins
+  unrelated to evasion, so the scripted pursuer (never suicides) was distilled
+  into a learned chaser: ch_hazard fell to ~2%, but the student catches only
+  15-35% of episodes where the scripted teacher catches 60-87% and run21's
+  trained chaser catches ~30-45%. Result: against the distilled chaser every
+  entrant's escape rate inflates (run21 57%, its early snapshot 68%, the expert
+  64.4%), so it is a bad training opponent. Kept as a "no-suicide" reference
+  opponent rather than as a warm start.
+- Consequence for the ladder: run23 uses the stronger *evader* init
+  (E21's 30.7% distillation), not the chaser warm start.
+
+## E22 — a fixed, non-suicidal opponent for the metric (POSITIVE, tooling)
+- The learned chasers drift (retrained as recipes change) and hand out
+  `ch_hazard` wins, so `hardarena --scripted-chaser` was added: the privileged
+  pursuer as a frozen opponent. It never suicides (ch_hazard ~0-1%) and never
+  changes, so it is a stable yardstick for comparing evaders across runs.
+- First measurements (100 matches, 310 calm arenas): run17 trained 37%,
+  run21 trained 31%, run21 early snapshot 36%, fresh init 0%, BC init 1-11%
+  (with 82% ev_hazard), scripted expert **11%** — the expert is caught in 87%
+  of episodes by its own scripted pursuer, while learned evaders survive it
+  three times as often. Being unpredictable is worth more than planning
+  against this particular pursuer; the finding is worth remembering when
+  reading "expert" as a ceiling.
+
+## E23 — the reported checkpoint was the last block, not the best (DEFECT)
+Sweeping every saved checkpoint on one arena block exposed the biggest
+reporting defect in the repo: `evader.zip` is the LAST-block save, but every
+tool labelled it `trained (best)`, and `select.py` — which exists to pick the
+best block by escape rate on a fixed arena set — had never been run for the
+recent runs (`selected.txt` was hand-authored, which the audit caught).
+
+| run | best block (selection block seed0=3000) | last block b299 |
+|---|---:|---:|
+| run22 | b220 62% | 26% |
+| run21 | b200 59% | 37% |
+| run23 | b260 31% (b250 43% on a 60-match sweep) | 18% |
+
+Those 59-62% do NOT survive re-measurement on a disjoint arena block, which is
+the second half of the lesson: with ~31 checkpoints to choose from and 24-48
+matches each, the maximum is a winner's-curse estimate (n=48 -> SE ~7%). On the
+disjoint reporting block (seed0=9000, 100 matches, vs run21's chaser):
+
+| policy | escape | ev_hazard |
+|---|---:|---:|
+| run21 trained (final b299) | **37%** | 19 |
+| run23 DAgger init (distillation only) | 36% | 19 |
+| scripted expert | 33% | 4 |
+| run22 trained (selected b220) | 33% | 15 |
+| dagger_mix (4 rotating opponents, ~190k pairs) | 31% | 17 |
+| run22 init / pool b0 | 28% / 27% | 18 / 20 |
+| run22 trained (final b299) | 26% | 18 |
+| run23 trained (selected b260 / final b299) | 25% / 22% | 12 / 23 |
+
+**The arena block alone moves the expert from 54.5% (seed0=5000) to 33%
+(seed0=9000), so only same-block comparisons are meaningful** — everything
+above is one block, one opponent, 100 matches (SE ~4.7%).
+
+Protocol fixes: `hardarena --arena-seed0` (report on a different arena block
+than the one used for selection), `select.py --chaser-run` (a fixed opponent
+makes runs comparable) and `--arena-seed0`, `evader_final.zip` (the last-block
+save is preserved when selection overwrites `evader.zip`), self-describing
+`selected.txt`, and entrant labels that distinguish `selected bN` from
+`final b299`.
+
+## E24 — hazard-death incentive (SETUP)
+`r_hazard == r_caught == -8`: the evader is exactly indifferent between dying on
+spikes and being caught, while the hand-coded expert treats spikes as a hard
+avoidance constraint. Learned evaders therefore pay 17-23 spike deaths per 100
+episodes where the expert pays 4, and every spike death is an escape that never
+happened. Two 150-block fine-tunes warm-started from run21's final policy (the
+best measured policy) isolate the fix: run24 `--r-hazard -14` (evader side
+only) and run25 `--r-hazard -14 --r-hazard-ch -14` (also punish the chaser's
+own spike suicide, its worst defect). Early signal: with the chaser penalty the
+co-trained chaser survives to ~233 steps instead of ~176.
+
+## E25 — the improvement loop has hit a plateau, and 100-match claims were noise
+Definitive measurement: ONE hardarena call (identical arena set seed0=9000, identical
+env seeds, 300 matches each, vs run21's chaser), so the comparison is paired:
+
+| policy | escape | ev_hazard |
+|---|---:|---:|
+| DAgger distillation only (dagger_run23, 15 min, no RL) | **35.3%** | 42 |
+| run21 trained (final b299) | 32.1% | 44 |
+| run23 trained (selected b260) | 30.5% | 42 |
+| run27 trained (150 blocks, frozen opponent, no warmup) | 30.0% | 81 |
+| run26 trained (frozen opponent + hazard rewards) | **19.3%** | 112 |
+
+Everything learned lands at or below the distillation; the scripted expert measured
+33% on this block at 100 matches. Conclusions that survive:
+- **No strategy tested clearly beats run21's final policy or a plain distillation.**
+  Distillation reaches that level in ~15 minutes where RL takes hours.
+- **The hazard-reward change fails** (run26: 19.3%, i.e. spike deaths rose to 112
+  per ~300 episodes, the worst of any policy): making spike death worse than
+  capture pushes the evader into more spikes, not fewer.
+- **Freezing the opponent does not recover the erosion either**: run27 (frozen
+  run23 chaser, warmup disabled) ends level with its own starting point (30.0%
+  vs run21's 32.1%) and doubles the spike-death rate.
+- Every learned policy dies on spikes 4-11x as often as the scripted expert
+  (42-112 vs ~10 per test): the dominant remaining failure mode is hazard
+  handling, and it is not fixed by penalizing it harder.
+
+### Measurement protocol (two defects found while making the table above)
+1. **A 100-match, single-block comparison cannot resolve the differences being
+   claimed.** run27's last block scored 43% at 100 matches and 30% at 300 with
+   the same arenas; run22's checkpoint sweep produced 57-62% estimates that fell
+   to 26-33% on a disjoint block. Treat anything under ~300 matches and without a
+   paired design as a hypothesis, not a result.
+2. **The `--run` flag changes the measurement, not just the entrant.** run21's
+   evader_final.zip scores 32.1% with `--run results/run21_fixed` and 28.9% with
+   `--run results/run24_haz_ev` on the same arena block (identical weights, same
+   command otherwise): the run supplies the env params (n_envs -> batch layout,
+   reward values, obs geometry). Therefore competing policies must be measured in
+   ONE call via repeated `--evader-ckpt`, which is what `--evader-ckpt` exists for.

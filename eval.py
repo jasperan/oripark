@@ -27,7 +27,7 @@ def load(path, role, tp, mp, ep, device):
         env.close()
         return ppo
     ppo = make_ppo(env, tp, 0, device, side=role)
-    ppo.policy.load_state_dict(torch.load(path, map_location=device))
+    ppo.policy.load_state_dict(torch.load(path, map_location=device, weights_only=True))
     env.close()
     return ppo
 
@@ -59,7 +59,10 @@ def main():
     ap.add_argument("--deterministic", action="store_true",
                     help="eval with deterministic evader (stochastic is the default honest measure)")
     ap.add_argument("--baseline", action="store_true",
-                    help="also evaluate the untrained pool_ev_0 baseline for improvement comparison")
+                    help="also evaluate the pre-training baseline for the "
+                         "improvement comparison (pool_ev_boot.pt, else "
+                         "evader_init.pt — NOT pool_ev_0.pt, which is an early "
+                         "trained snapshot; see oripark/baselines.py)")
     args = ap.parse_args()
 
     tp, mp, ep = load_run_params(args.run)
@@ -78,7 +81,7 @@ def main():
     n_envs = min(args.matches, 32)
     ev_det = args.deterministic
     res = run_eval(ev.policy, ch.policy, sampler, mp, ep, n_envs, ev_det=ev_det)
-    n = res["esc"] + res["caught"] + res["tm"]
+    n = res["n"]
 
     md = f"""# Ori-park head-to-head report (`{args.run}`)
 
@@ -99,15 +102,17 @@ Eval protocol: evader plays **{('deterministic' if ev_det else 'stochastic')}**,
     if args.baseline:
         base_path = os.path.join(args.run, "evader_init.pt")
         if not os.path.exists(base_path):
-            base_path = os.path.join(args.run, "pool_ev_0.pt")
+            from oripark.baselines import find_baseline
+            base_path, base_label = find_baseline(args.run)
+            base_path = base_path or os.path.join(args.run, "pool_ev_0.pt")
         base = load(base_path, "evader", tp, mp, ep, device)
         rb = run_eval(base.policy, ch.policy, sampler, mp, ep, n_envs)
-        nb = rb["esc"] + rb["caught"] + rb["tm"]
+        nb = rb["n"]
         md += f"""## Improvement vs untrained baseline (same arenas, same chaser)
 
 | policy | matches | escape rate | caught | avg zone | avg length |
 |---|---|---|---|---|---|
-| untrained (pool_ev_0) | {nb} | {rb["esc"] / max(nb, 1):.2%} | {rb["caught"]} | {rb["zone"]:.1f} | {rb["length"]:.0f} steps |
+| baseline ({base_label}) | {nb} | {rb["esc"] / max(nb, 1):.2%} | {rb["caught"]} | {rb["zone"]:.1f} | {rb["length"]:.0f} steps |
 | trained (evader.zip) | {n} | {res["esc"] / max(n, 1):.2%} | {res["caught"]} | {res["zone"]:.1f} | {res["length"]:.0f} steps |
 | **improvement** | | **+{(res["esc"] / max(n, 1) - rb["esc"] / max(nb, 1)):.2%}** | **{res["caught"] - rb["caught"]:+d}** | **{res["zone"] - rb["zone"]:+.1f}** | **{res["length"] - rb["length"]:+.0f} steps** |
 """
@@ -120,29 +125,16 @@ Eval protocol: evader plays **{('deterministic' if ev_det else 'stochastic')}**,
 
 
 def run_eval(ev_pol, ch_pol, sampler, mp, ep, n_envs, ev_det: bool = False, seed: int = 7) -> dict:
-    """Stochastic evader vs deterministic chaser on a shared arena sampler."""
+    """Stochastic evader vs deterministic chaser on a shared arena sampler.
+
+    Delegates to oripark.evals.play_episodes, which counts every finished
+    episode (including hazard deaths) in the denominator.
+    """
+    from oripark.evals import play_episodes
     env = OriArenaVecEnv("evader", n_envs, sampler, mp, ep,
                          opponent=frozen_policy(ch_pol, deterministic=True), seed=seed)
-    obs = env.reset()
-    esc = caught = tm = 0
-    zones, lens = [], []
-    for _ in range(ep.max_steps):
-        a = ev_pol.predict(obs, deterministic=ev_det)[0]
-        obs, _, done, infos = env.step(a)
-        for info in infos:
-            if "episode" in info:
-                o = info["outcome"]
-                zones.append(info["ev_max_zone"])
-                lens.append(info["episode"]["l"])
-                esc += o == "escaped"
-                caught += o == "caught"
-                tm += o == "timeout"
-        if esc + caught + tm >= n_envs:
-            break
-    env.close()
-    return {"esc": esc, "caught": caught, "tm": tm,
-            "zone": float(np.mean(zones)) if zones else 0.0,
-            "length": float(np.mean(lens)) if lens else 0.0}
+    return play_episodes(env, lambda obs: ev_pol.predict(obs, deterministic=ev_det)[0],
+                         ep.max_steps, n_envs)
 
 
 if __name__ == "__main__":

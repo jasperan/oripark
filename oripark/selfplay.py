@@ -17,11 +17,11 @@ import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 
-from .adversaries import StaticSampler, TerrainAdversary
+from .adversaries import FixedListSampler, StaticSampler, TerrainAdversary
 from .arena import Arena, ArenaGenerator
 from .config import EnvParams, MoveParams, TrainParams
 from .env import OriArenaVecEnv
-from .metrics import Elo, Metrics
+from .metrics import Elo, Metrics, elo_pair_update
 
 
 def frozen_policy(policy, deterministic: bool = False):
@@ -57,6 +57,21 @@ def sample_opponent(pool, rng, latest_prob: float):
     if len(pool) == 1 or rng.random() < latest_prob:
         return pool[-1]
     return pool[int(rng.integers(0, len(pool) - 1))]
+
+
+def cem_score(outcome: str) -> float:
+    """The terrain adversary's win-rate objective for one episode.
+
+    Must match evaluate()'s semantics: escape (or a chaser spike death) is a
+    win, a timeout is a DRAW, and the evader dying is a loss. Scoring a
+    timeout as a full win made the CEM escalate difficulty against a learner
+    that was merely surviving to the clock.
+    """
+    if outcome in ("escaped", "ch_hazard"):
+        return 1.0
+    if outcome == "timeout":
+        return 0.5
+    return 0.0
 
 
 class GapSprinkler:
@@ -141,6 +156,7 @@ def _cand_eval(cands, ev_pol, ch_pol, gen, mp, ep, tp, device) -> np.ndarray:
     obs = env.reset()
     wrs = np.zeros(n_cand)
     counts = np.zeros(n_cand)
+    n_done = 0
     for _ in range(tp.eval_ep_len):
         # stochastic play — the honest measure; deterministic argmax gets
         # stuck in repetitive patterns and would report wr=0 everywhere,
@@ -150,33 +166,45 @@ def _cand_eval(cands, ev_pol, ch_pol, gen, mp, ep, tp, device) -> np.ndarray:
         for i, info in enumerate(infos):
             if "episode" in info:
                 c = i // tp.adv_matches
-                wrs[c] += 1.0 if info["ev_win"] else 0.5 if info["outcome"] == "timeout" else 0.0
+                # win semantics must match evaluate(): escape = win,
+                # timeout = draw, spike death = loss. `info["ev_win"]`
+                # counts a timeout as a win, which made the CEM escalate
+                # against a learner that was merely surviving.
+                out = info["outcome"]
+                wrs[c] += cem_score(out)
                 counts[c] += 1
-        if counts.sum() >= N:
+                n_done += 1
+        if n_done >= N:
             break
     env.close()
     return wrs / np.maximum(counts, 1)
 
 
-def evaluate(ev_pol, ch_pol, sampler, mp, ep, n_envs: int, max_steps: int, seed: int = 7) -> dict:
-    """Head-to-head eval: evader policy vs chaser policy, both deterministic.
+def evaluate(ev_pol, ch_pol, sampler, mp, ep, n_envs: int, max_steps: int,
+             seed: int = 7, stochastic: bool = False,
+             opp_ep: EnvParams | None = None) -> dict:
+    """Head-to-head eval: evader policy vs chaser policy.
 
-    Win semantics: escape/ch_hazard = evader win; caught/ev_hazard = chaser win;
-    timeout = draw. Escape rate is the primary agility signal.
+    Win semantics: escape/ch_hazard = evader win; caught/ev_hazard = chaser
+    win; timeout = draw. Escape rate is the primary agility signal. Both
+    sides sample actions when `stochastic` (the honest protocol — E13).
     """
     env = OriArenaVecEnv("evader", n_envs, sampler, mp, ep,
-                         opponent=frozen_policy(ch_pol, deterministic=True), seed=seed)
+                         opponent=frozen_policy(ch_pol, deterministic=not stochastic),
+                         seed=seed)
     obs = env.reset()
     wins = losses = draws = 0
     escaped = caught = 0
     lens = []
+    n_done = 0
     for _ in range(max_steps):
-        a = ev_pol.predict(obs, deterministic=True)[0]
+        a = ev_pol.predict(obs, deterministic=not stochastic)[0]
         obs, _, done, infos = env.step(a)
         for info in infos:
             if "episode" in info:
                 lens.append(info["episode"]["l"])
                 out = info["outcome"]
+                n_done += 1
                 if out == "escaped":
                     wins += 1; escaped += 1
                 elif out == "ch_hazard":
@@ -187,7 +215,7 @@ def evaluate(ev_pol, ch_pol, sampler, mp, ep, n_envs: int, max_steps: int, seed:
                     losses += 1
                 else:
                     draws += 1
-        if wins + losses + draws >= n_envs:
+        if n_done >= n_envs:
             break
     env.close()
     return {"wins": wins, "losses": losses, "draws": draws, "escaped": escaped,
@@ -248,13 +276,16 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
     rng = np.random.default_rng(tp.seed)
     gen = ArenaGenerator(mp, rng)
     adv = TerrainAdversary(gen, rng, pop=tp.adv_pop, elites=tp.adv_elites,
-                           sigma0=tp.adv_sigma0, target_wr=tp.adv_target_wr)
+                           sigma0=tp.adv_sigma0, target_wr=tp.adv_target_wr,
+                           sigma_floor=getattr(tp, "adv_sigma_floor", 0.05),
+                           mu0=getattr(tp, "adv_mu_init", None))
     tr_sampler = adv
     if getattr(tp, "gap_force_prob", 0.0) > 0:
         tr_sampler = GapSprinkler(adv, tp.gap_force_prob, tp.gap_force, gen, rng)
         print(f"gap-sprinkling: {tp.gap_force_prob:.0%} of training arenas at "
               f"gap_scale {tp.gap_force}", flush=True)
     metrics = Metrics(out_dir)
+    bc_rng = np.random.default_rng(tp.seed + 991)   # dedicated BC-subsample stream
 
     boot_ev = OriArenaVecEnv("evader", tp.n_envs, StaticSampler(gen, adv.mean_params(), rng),
                              mp, ep, seed=tp.seed)
@@ -262,6 +293,26 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
                              mp, ep, seed=tp.seed + 1)
     evader = make_ppo(boot_ev, tp, tp.seed, device, side="evader")
     chaser = make_ppo(boot_ch, tp, tp.seed + 1, device, side="chaser")
+    # optional warm start (e.g. a DAgger distillation of the scripted expert):
+    # PPO then refines an already-competent policy instead of starting from a
+    # random init that cannot escape at all (measured floor: 0%).
+    def _warm(policy, path, tag):
+        """Accept a bare state dict (.pt) or an SB3 checkpoint (.zip), so any
+        run's evader.zip can be fine-tuned further."""
+        if path.endswith(".zip"):
+            from stable_baselines3 import PPO
+            policy.load_state_dict(PPO.load(path, device=device).policy.state_dict())
+        else:
+            policy.load_state_dict(
+                torch.load(path, map_location=device, weights_only=True))
+        print(f"[init] {tag} warm-started from {path}", flush=True)
+
+    init_path = getattr(tp, "init_evader", None)
+    if init_path:
+        _warm(evader.policy, init_path, "evader")
+    init_ch = getattr(tp, "init_chaser", None)
+    if init_ch:
+        _warm(chaser.policy, init_ch, "chaser")
 
     # league pools (snapshot[0] = random init, used for "before" demos)
     ev_pool = [clone_policy(evader.policy, boot_ev, tp, tp.seed, device, "evader")]
@@ -270,6 +321,12 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
     # true untrained baselines (the league pool trims old snapshots)
     torch.save(ev_pool[0].state_dict(), os.path.join(out_dir, "evader_init.pt"))
     torch.save(ch_pool[0].state_dict(), os.path.join(out_dir, "chaser_init.pt"))
+    # ...and a copy under a name the pool trim cannot shadow: ev_pool.pop(0)
+    # eventually removes the untrained member, so the final pool_ev_0.pt written
+    # below is the oldest *trained* snapshot, not the baseline. Tools used to
+    # label it "random"/"untrained" and reported it as the floor.
+    torch.save(ev_pool[0].state_dict(), os.path.join(out_dir, "pool_ev_boot.pt"))
+    torch.save(ch_pool[0].state_dict(), os.path.join(out_dir, "pool_ch_boot.pt"))
 
     # ---- behavior cloning: pretrain the evader on scripted expert demos ----
     bc_demos = None
@@ -311,8 +368,13 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
             torch.save(evader.policy.state_dict(), os.path.join(out_dir, "evader_init.pt"))
             ev_pool[0] = clone_policy(evader.policy, boot_ev, tp, tp.seed, device, "evader")
 
-    # pre-created eval sampler: mean adversary params, fixed seeds -> stable Elo
-    eval_sampler = StaticSampler(gen, adv.mean_params(), np.random.default_rng(4242))
+    # pre-created eval sampler: a FIXED arena list (fixed seeds) so the Elo
+    # curve and eval_ev_win_rate are comparable across blocks. The previous
+    # StaticSampler re-drew `rng.integers` on every block, so each block was
+    # evaluated on a different arena set and the curve carried sampling noise.
+    eval_arenas = [gen.generate(adv.mean_params(), seed=9000 + k)
+                   for k in range(max(32, tp.eval_matches))]
+    eval_sampler = FixedListSampler(eval_arenas)
 
     summary = {"evader": None, "chaser": None, "adv": None, "adv_mu": list(adv.mu)}
 
@@ -329,7 +391,8 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
             opp_name = "pool"
         env = OriArenaVecEnv("evader", tp.n_envs, tr_sampler, mp, ep,
                              opponent=None if opp is None else frozen_policy(opp),
-                             seed=tp.seed + block)
+                             seed=tp.seed + block,
+                             opp_ep=getattr(tp, "opp_ep", None))
         evader.env = env
         evader.learn(total_timesteps=tp.block_steps,
                      callback=_Drain(env, metrics, "evader"),
@@ -337,22 +400,25 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
         env.close()
 
         # ---- BC regularization: keep the evader anchored to expert traversal
+        # AND to the flee demos (a prefix slice used to exclude every flee
+        # demo, since they are appended after the traversals)
         if bc_demos is not None and block % tp.bc_reg_every == 0:
             from oripark.bc import behavior_clone
             obs_list, act_list = bc_demos
             k = max(1, len(obs_list) // 2)          # subsample for speed
-            behavior_clone(evader.policy, obs_list[:k], act_list[:k],
+            idx = bc_rng.choice(len(obs_list), size=k, replace=False)
+            behavior_clone(evader.policy, [obs_list[j] for j in idx],
+                           [act_list[j] for j in idx],
                            epochs=tp.bc_reg_epochs,
                            lr=tp.evader_lr * tp.bc_reg_lr_frac, device=device)
 
         # ---------------- eval + snapshot evader ----------------
         res = evaluate(evader.policy, chaser.policy, eval_sampler, mp, ep,
-                       n_envs=min(tp.eval_matches, tp.n_envs), max_steps=tp.eval_ep_len)
+                       n_envs=min(tp.eval_matches, tp.n_envs), max_steps=tp.eval_ep_len,
+                       stochastic=True, opp_ep=getattr(tp, "opp_ep", None))
         n = res["wins"] + res["losses"] + res["draws"]
         score = (res["wins"] + 0.5 * res["draws"]) / max(n, 1)
-        r_opp = elo_ch.rating
-        elo_ev.update(r_opp, score)
-        elo_ch.update(elo_ev.rating, 1.0 - score)
+        elo_pair_update(elo_ev, elo_ch, score)
         ev_pool.append(clone_policy(evader.policy, boot_ev, tp, tp.seed, device, "evader"))
         if len(ev_pool) > tp.pool_size:
             ev_pool.pop(0)
@@ -373,11 +439,11 @@ def run(tp: TrainParams, mp: MoveParams, ep: EnvParams, out_dir: str, device: st
 
         # ---------------- eval + snapshot chaser ----------------
         res2 = evaluate(evader.policy, chaser.policy, eval_sampler, mp, ep,
-                        n_envs=min(tp.eval_matches, tp.n_envs), max_steps=tp.eval_ep_len)
+                        n_envs=min(tp.eval_matches, tp.n_envs), max_steps=tp.eval_ep_len,
+                        stochastic=True)
         n2 = res2["wins"] + res2["losses"] + res2["draws"]
         score2 = (res2["wins"] + 0.5 * res2["draws"]) / max(n2, 1)
-        elo_ev.update(elo_ch.rating, score2)
-        elo_ch.update(elo_ev.rating, 1.0 - score2)
+        elo_pair_update(elo_ev, elo_ch, score2)
         ch_pool.append(clone_policy(chaser.policy, boot_ch, tp, tp.seed + 1, device, "chaser"))
         if len(ch_pool) > tp.pool_size:
             ch_pool.pop(0)

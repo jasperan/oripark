@@ -27,8 +27,64 @@ def main():
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--device", type=str, default=None, help="cpu or cuda (default: cuda if available)")
     ap.add_argument("--quick", action="store_true", help="tiny smoke-test config")
+    ap.add_argument("--chaser-lr", type=float, default=None,
+                    help="chaser learning rate; 0 freezes it. With a frozen "
+                         "chaser the evader's league opponent never changes, "
+                         "which tests whether co-evolution is what erodes a "
+                         "fine-tuned policy (E23: 53%% -> 25%% over 120 blocks)")
+    ap.add_argument("--warmup-blocks", type=int, default=None,
+                    help="blocks of random-chaser warmup; set 0 when warm "
+                         "starting from a competent policy")
+    ap.add_argument("--chaser-net", type=str, default=None,
+                    help="comma-separated hidden widths for the chaser")
     ap.add_argument("--evader-net", type=str, default=None, help="e.g. 384,384")
     ap.add_argument("--evader-lr", type=float, default=None)
+    ap.add_argument("--init-evader", type=str, default=None,
+                    help="warm-start the evader from a state dict (.pt) or any "
+                         "SB3 checkpoint (.zip), e.g. results/runN/evader.zip. "
+                         "PPO then refines an already-competent policy instead "
+                         "of a random init that escapes 0%% of hard arenas.")
+    ap.add_argument("--opp-patch", type=str, default=None,
+                    help="up,down patch rows for the FROZEN opponent, so a "
+                         "checkpoint trained with a different obs window keeps "
+                         "its native geometry instead of seeing a shifted patch")
+    ap.add_argument("--adv-sigma-floor", type=float, default=None,
+                    help="lower bound on the arena-adversary sigma. At the 0.05 "
+                         "default the CEM collapses to a near-point distribution "
+                         "and the policy is tested on arenas it never trained on")
+    ap.add_argument("--adv-sigma0", type=float, default=None)
+    ap.add_argument("--adv-mu-init", type=str, default=None,
+                    help="6 comma-separated arena params to start the adversary "
+                         "at (default 0.15,0.15,0.05,0.2,0.2,0.05 = easy)")
+    ap.add_argument("--obs-path-hint", action="store_true",
+                    help="append 6 BFS waypoint features to the evader obs (the "
+                         "expert's route plan; see docs/EXPERIMENTS.md E26)")
+    ap.add_argument("--patch-up", type=int, default=None,
+                    help="rows of the obs patch ABOVE the agent (default 7)")
+    ap.add_argument("--patch-down", type=int, default=None,
+                    help="rows of the obs patch BELOW the agent (default 2!). A "
+                         "post-mortem shows 100%% of spike deaths come from "
+                         "falling onto a spike that was outside this window one "
+                         "step before the death, so the policy cannot see the "
+                         "hazard it lands on. Keeping up+1+down = 10 preserves "
+                         "obs_dim, so existing checkpoints still load")
+    ap.add_argument("--r-hazard", type=float, default=None,
+                    help="override the evader's spike-death reward. It defaults "
+                         "to the SAME value as r_caught (-8), so the learner is "
+                         "indifferent between dying on spikes and being caught "
+                         "and has no reason to be spike-safe; learned evaders "
+                         "die on spikes 4-5x as often as the scripted expert")
+    ap.add_argument("--r-hazard-ch", type=float, default=None,
+                    help="override the CHASER's self-impalement reward (the "
+                         "suicide rate is the learned chaser's worst defect)")
+    ap.add_argument("--init-chaser", type=str, default=None,
+                    help="warm-start the chaser from a state-dict checkpoint "
+                         "(e.g. a DAgger distillation of the scripted pursuer, "
+                         "which unlike the learned chasers never kills itself "
+                         "on spikes)")
+    ap.add_argument("--bc-epochs", type=int, default=None,
+                    help="behaviour-cloning epochs at startup (0 = skip; "
+                         "defaults to 0 when --init-evader is given)")
     ap.add_argument("--gap-force-prob", type=float, default=None,
                     help="fraction of training arenas with gap_scale forced high")
     ap.add_argument("--gap-force", type=float, default=None,
@@ -58,8 +114,51 @@ def main():
         tp.out_dir = args.out
     if args.evader_net:
         tp.evader_net = [int(x) for x in args.evader_net.split(",")]
+    # warm starts must match the checkpoint's architecture: run21 is 384-wide
+    # while the default is 256, and a mismatch only surfaces as a torch
+    # "size mismatch" traceback mid-run
+    def _net_from_ckpt(path):
+        from stable_baselines3 import PPO as _PPO
+        sd = _PPO.load(path, device="cpu").policy.state_dict()
+        ws = [v.shape for k, v in sd.items()
+              if k.startswith("mlp_extractor.policy_net.") and k.endswith(".weight")]
+        if not ws:
+            return None
+        # every Linear in mlp_extractor.policy_net is a hidden layer (the
+        # action head lives in action_net), so count them all: run21 has two
+        # 384-wide layers and reports [384, 384]
+        return [int(ws[0][0])] * len(ws)
+
+    if args.init_evader and args.init_evader.endswith(".zip") and not args.evader_net:
+        net = _net_from_ckpt(args.init_evader)
+        if net:
+            tp.evader_net = net
+            print(f"[cfg] evader net {net} (from {args.init_evader})", flush=True)
+    if args.init_chaser and args.init_chaser.endswith(".zip") and not getattr(args, "chaser_net", None):
+        net = _net_from_ckpt(args.init_chaser)
+        if net:
+            tp.chaser_net = net
+            print(f"[cfg] chaser net {net} (from {args.init_chaser})", flush=True)
+    if args.chaser_lr is not None:
+        tp.chaser_lr = args.chaser_lr
+    if args.warmup_blocks is not None:
+        tp.warmup_blocks = args.warmup_blocks
+    elif args.init_evader or args.init_chaser:
+        # a warm-started policy must not spend its first blocks playing a
+        # RANDOM opponent: run24 (warm start, default 30-block warmup) fell from
+        # 53% to 42% on the fixed benchmark inside that window
+        print(f"[cfg] warmup_blocks {tp.warmup_blocks} -> 0 (warm start)", flush=True)
+        tp.warmup_blocks = 0
+    if args.chaser_net:
+        tp.chaser_net = [int(x) for x in args.chaser_net.split(",")]
     if args.evader_lr:
         tp.evader_lr = args.evader_lr
+    if args.init_chaser:
+        tp.init_chaser = args.init_chaser
+    if args.init_evader:
+        tp.init_evader = args.init_evader
+        if args.bc_epochs is None:
+            tp.bc_epochs = 0        # the warm start replaces BC pretraining
     if args.gap_force_prob is not None:
         tp.gap_force_prob = args.gap_force_prob
     if args.gap_force is not None:
@@ -67,6 +166,35 @@ def main():
 
     mp = MoveParams()
     ep = EnvParams()
+    if args.adv_sigma_floor is not None:
+        tp.adv_sigma_floor = args.adv_sigma_floor
+    if args.adv_sigma0 is not None:
+        tp.adv_sigma0 = args.adv_sigma0
+    if args.adv_mu_init:
+        tp.adv_mu_init = tuple(float(x) for x in args.adv_mu_init.split(","))
+    if args.obs_path_hint:
+        ep.obs_path_hint = True
+    if args.patch_up is not None:
+        ep.patch_up = args.patch_up
+    if args.patch_down is not None:
+        ep.patch_down = args.patch_down
+    if args.patch_up is not None or args.patch_down is not None:
+        print(f"[cfg] obs patch up={ep.patch_up} down={ep.patch_down} "
+              f"(window {ep.patch_up + 1 + ep.patch_down} rows, "
+              f"obs_dim {24 + (ep.patch_back + 1 + ep.patch_front) * (ep.patch_up + 1 + ep.patch_down)})",
+              flush=True)
+    if args.opp_patch:
+        u, d = (int(x) for x in args.opp_patch.split(","))
+        from dataclasses import replace as _replace
+        tp.opp_ep = _replace(ep, patch_up=u, patch_down=d,
+                            patch_back=ep.patch_back, patch_front=ep.patch_front)
+        print(f"[cfg] frozen opponent patch up={u} down={d}", flush=True)
+    if args.r_hazard is not None:
+        ep.r_hazard = args.r_hazard
+        print(f"[cfg] evader hazard-death reward {ep.r_hazard}", flush=True)
+    if args.r_hazard_ch is not None:
+        ep.r_hazard_ch = args.r_hazard_ch
+        print(f"[cfg] chaser self-impalement reward {ep.r_hazard_ch}", flush=True)
     save_run_params(tp.out_dir, tp, mp, ep)   # persist the exact run config
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     print(f"== ori-park self-play | device={device} | blocks={tp.blocks} "

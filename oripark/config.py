@@ -74,7 +74,9 @@ class EnvParams:
     r_agility: float = 0.06
     r_portal: float = 10.0                   # clean escape — the dominant objective
     r_caught: float = -8.0
-    r_hazard: float = -8.0
+    r_hazard: float = -8.0                  # evader dies on spikes
+    r_hazard_ch: float = -8.0               # chaser impales itself (learned
+    # chasers die this way in 19-43% of episodes; see docs/EXPERIMENTS.md E21)
     r_timeout: float = -10.0                 # failing to escape is a loss for the evader
     r_hindsight: float = 2.0                 # credit best-ever portal progress on failure
     # forward-biased observation patch: the game is a rightward escape, and
@@ -85,9 +87,25 @@ class EnvParams:
     patch_front: int = 13
     patch_up: int = 7
     patch_down: int = 2
+    obs_path_hint: bool = False            # append 6 BFS waypoint features (see
+    # docs/EXPERIMENTS.md E26): learned policies escape only 52-63% of the hard
+    # arenas with the chaser PARKED and die on spikes 37-45% of the time, where
+    # the scripted expert is 100%/0% and FASTER. The expert's edge is BFS route
+    # planning, which action-level imitation does not transfer, so the hint gives
+    # the policy the plan (cached per arena: one BFS per arena, not per step).
     patch_w: int = 19          # back + 1 + front (kept in sync for readability)
     patch_h: int = 10          # up + 1 + down
     arena_difficulty_mix: float = 0.15       # chance a reset uses mean params
+    # Observation-unit convention. The direction/distance features used to be
+    # an inconsistent mix: positions were fractions of the arena (0..1) while
+    # the orb/opponent/portal deltas were pixels divided by the arena size in
+    # TILES, i.e. 32x larger (tile = 32 px), and the "no orb" sentinel was
+    # 9 px inside bash_range. Anything trained before that was fixed reads
+    # those channels at 32x the magnitude it learned on, so evaluating an old
+    # checkpoint requires this flag to be set: it restores the training-time
+    # scaling (and the old sentinel) instead of silently feeding the policy
+    # out-of-distribution inputs.
+    obs_legacy_units: bool = False
 
 
 @dataclass
@@ -124,6 +142,11 @@ class TrainParams:
     ladder_blocks: int = 120
     bc_episodes: int = 400                   # scripted demos for BC pretraining
     bc_epochs: int = 8                       # BC epochs (0 = skip behavior cloning)
+    init_evader: str | None = None           # warm-start evader checkpoint (state dict)
+    init_chaser: str | None = None           # warm-start chaser checkpoint
+    opp_patch: tuple | None = None           # (up, down) patch rows for a FROZEN
+    # opponent trained with a different obs geometry: without this, changing the
+    # obs window silently shifts the opponent's own patch and changes its play
     bc_flee_frac: float = 0.35               # fraction of BC demos collected with a
                                              # pursuer hovering behind (flee patterns)
     bc_pursued_dx: float = -120.0            # fake chaser offset for flee demos
@@ -145,6 +168,12 @@ class TrainParams:
     adv_matches: int = 4
     adv_sigma0: float = 0.30
     adv_target_wr: float = 0.50
+    adv_sigma_floor: float = 0.05           # the CEM shrinks sigma toward this
+    # floor: at 0.05 the "adversarial" arena curriculum is effectively a FIXED
+    # narrow distribution (run21's adv_mu is [0.61 0.4 0.76 0.68 0.39 0.03]) and
+    # the learned policies then lose ~20 points of no-chaser escape when moved to
+    # the benchmark's p=0.7 arenas (see docs/EXPERIMENTS.md E26)
+    adv_mu_init: tuple | None = None        # override the easy 0.15/0.2 start
     seed: int = 0
     out_dir: str = "results/run1"
 

@@ -16,7 +16,8 @@ import torch  # noqa: E402
 
 from oripark.adversaries import StaticSampler  # noqa: E402
 from oripark.arena import ArenaGenerator  # noqa: E402
-from oripark.config import EnvParams, MoveParams, TrainParams  # noqa: E402
+from oripark.config import (EnvParams, MoveParams, TrainParams,  # noqa: E402
+                             load_run_params)
 from oripark.render import ReplayRecorder, ascii_frames, make_gif  # noqa: E402
 from oripark.selfplay import make_ppo, set_nets_from_run  # noqa: E402
 
@@ -37,7 +38,7 @@ def load_policy(pt_path: str, role: str, tp: TrainParams, mp: MoveParams,
         env.close()
         return ppo
     ppo = make_ppo(env, tp, 0, device, side=role)
-    sd = torch.load(pt_path, map_location=device)
+    sd = torch.load(pt_path, map_location=device, weights_only=True)
     ppo.policy.load_state_dict(sd)
     env.close()
     return ppo
@@ -57,10 +58,8 @@ def main():
     ap.add_argument("--ascii", action="store_true", help="also print an ASCII replay")
     args = ap.parse_args()
 
-    tp = TrainParams()
+    tp, mp, ep = load_run_params(args.run)      # replay under the run's own physics/env
     set_nets_from_run(tp, args.run)
-    mp = MoveParams()
-    ep = EnvParams()
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     rng = np.random.default_rng(0)
@@ -80,7 +79,9 @@ def main():
     ch_after = load_policy(ch_path, "chaser", tp, mp, ep, device)
     base_path = os.path.join(args.run, "evader_init.pt")
     if not os.path.exists(base_path):
-        base_path = os.path.join(args.run, "pool_ev_0.pt")
+        from oripark.baselines import find_baseline
+        base_path, base_label = find_baseline(args.run)
+        base_label = base_label or "pool_ev_0"
     ev_before = load_policy(base_path, "evader", tp, mp, ep, device)
     ev_after = load_policy(os.path.join(args.run, "evader.zip"), "evader", tp, mp, ep, device)
 
@@ -90,7 +91,7 @@ def main():
         fr, out = rec.run(args.max_steps)
         rec.close()
         print(f"before: outcome={out} len={len(fr)}")
-        clips.append((fr, out, "UNTRAINED (block 0)"))
+        clips.append((fr, out, f"UNTRAINED ({base_label})"))
         if args.ascii:
             print(ascii_frames(fr, arena, mp))
     if args.mode in ("after", "both"):

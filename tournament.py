@@ -34,7 +34,7 @@ def load_policy(path, role, tp, mp, ep, device="cpu"):
         p = PPO.load(path, env=env, device=device)
     else:
         p = make_ppo(env, tp, 0, device, side=role)
-        p.policy.load_state_dict(torch.load(path, map_location=device))
+        p.policy.load_state_dict(torch.load(path, map_location=device, weights_only=True))
     env.close()
     return p
 
@@ -103,35 +103,23 @@ def make_arena_set(run_dir, mp, ep, n=24, seed0=4242, combined=False):
 def escape_rate(ev_pol, ch_pol, sampler, mp, ep, matches=40, seed=7,
                 chaser_stoch=False):
     """Stochastic evader vs frozen chaser (argmax or action sampling) on the
-    fixed arena set."""
+    fixed arena set; every finished episode counts in `n`."""
+    from oripark.evals import play_episodes
     env = OriArenaVecEnv("evader", matches, sampler, mp, ep,
                          opponent=frozen_policy(ch_pol, deterministic=not chaser_stoch),
                          seed=seed)
-    obs = env.reset()
-    esc = caught = tm = 0
-    lens = []
-    for _ in range(ep.max_steps):
-        a = ev_pol.predict(obs, deterministic=False)[0]
-        obs, _, done, infos = env.step(a)
-        for info in infos:
-            if "episode" in info:
-                o = info["outcome"]
-                esc += o == "escaped"
-                caught += o == "caught"
-                tm += o == "timeout"
-                lens.append(info["episode"]["l"])
-        if esc + caught + tm >= matches:
-            break
-    env.close()
-    return {"esc": esc, "caught": caught, "tm": tm, "n": esc + caught + tm,
-            "avg_len": float(np.mean(lens)) if lens else 0.0}
+    r = play_episodes(env, lambda obs: ev_pol.predict(obs, deterministic=False)[0],
+                      ep.max_steps, matches)
+    r["avg_len"] = r.pop("length")
+    return r
 
 
 def entrants_for(run_dir, tp, mp, ep, max_checkpoints=8):
     """Ordered entrant list: random init -> BC -> checkpoints -> final, plus
     the scripted expert as a reference player."""
     ents = []
-    p0 = os.path.join(run_dir, "pool_ev_0.pt")
+    from oripark.baselines import find_baseline
+    p0, _ = find_baseline(run_dir)
     if os.path.exists(p0):
         ents.append(("random-init", p0))
     bi = os.path.join(run_dir, "evader_init.pt")
@@ -194,7 +182,9 @@ def main():
         rate = r["esc"] / max(r["n"], 1)
         rows.append((name, r, rate))
         print(f"  {name:22s} esc={r['esc']:3d}/{r['n']} ({rate:5.1%}) "
-              f"caught={r['caught']} len={r['avg_len']:5.0f}", flush=True)
+              f"caught={r['caught']} tm={r['tm']} ev_haz={r['ev_hazard']} "
+              f"ch_haz={r['ch_hazard']} zone={r['zone']:.1f} "
+              f"len={r['avg_len']:5.0f}", flush=True)
         ev = None
 
     # ---- scripted expert reference (no NN — pure BFS waypoint + flee)
@@ -203,7 +193,8 @@ def main():
                          opponent=frozen_policy(ch.policy, deterministic=True), seed=0)
     scripts = [ScriptedEvader(mp, ep) for _ in range(env.n_envs)]
     obs = env.reset()
-    esc_s = caught_s = tm_s = 0
+    counts_s = {o: 0 for o in ("escaped", "caught", "timeout",
+                               "ev_hazard", "ch_hazard")}
     lens_s = []
     done_n = 0
     for _ in range(ep.max_steps):
@@ -222,18 +213,20 @@ def main():
         for info in infos:
             if "episode" in info:
                 o = info["outcome"]
-                esc_s += o == "escaped"
-                caught_s += o == "caught"
-                tm_s += o == "timeout"
+                counts_s[o] += 1
                 lens_s.append(info["episode"]["l"])
                 done_n += 1
         if done_n >= args.matches:
             break
     env.close()
     rows.append(("scripted expert",
-                 {"esc": esc_s, "caught": caught_s, "tm": tm_s,
+                 {"esc": counts_s["escaped"], "caught": counts_s["caught"],
+                  "tm": counts_s["timeout"],
+                  "ev_hazard": counts_s["ev_hazard"],
+                  "ch_hazard": counts_s["ch_hazard"],
+                  "zone": 0.0,
                   "n": done_n, "avg_len": float(np.mean(lens_s)) if lens_s else 0.0},
-                 esc_s / max(done_n, 1)))
+                 counts_s["escaped"] / max(done_n, 1)))
 
     rows.sort(key=lambda r: -r[2])
     rank = {name: i + 1 for i, (name, _, _) in enumerate(rows)}
@@ -295,12 +288,14 @@ def main():
         f"`{np.round(mu,2)}`) · {args.matches} matches each · stochastic "
         "evader, deterministic chaser (the honest PPO protocol).",
         "",
-        "| rank | entrant | escape rate | caught | avg len |",
-        "|---|---|---:|---:|---:|",
+        "| rank | entrant | escape rate | escaped | caught | timeout | ev_hazard | ch_hazard | avg len |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for name, r, rate in rows:
         lines.append(f"| {rank[name]} | {name} | {rate:.0%} ({r['esc']}/{r['n']}) "
-                     f"| {r['caught']} | {r['avg_len']:.0f} |")
+                     f"| {r['esc']} | {r['caught']} | {r['tm']} "
+                     f"| {r['ev_hazard']} | {r['ch_hazard']} "
+                     f"| {r['avg_len']:.0f} |")
     lines += [
         "",
         "## Recorded videos",

@@ -19,7 +19,7 @@ from oripark.config import (EnvParams, MoveParams, TrainParams,
                              load_run_params)  # noqa: E402
 from oripark.env import OriArenaVecEnv  # noqa: E402
 from oripark.selfplay import frozen_policy, make_ppo, set_nets_from_run  # noqa: E402
-from oripark.render import make_gif  # noqa: E402
+from oripark.render import ReplayRecorder, make_gif  # noqa: E402
 
 
 def load(path, role, tp, mp, ep, mu):
@@ -31,7 +31,7 @@ def load(path, role, tp, mp, ep, mu):
         p = PPO.load(path, env=env, device="cpu")
     else:
         p = make_ppo(env, tp, 0, "cpu", side=role)
-        p.policy.load_state_dict(torch.load(path, map_location="cpu"))
+        p.policy.load_state_dict(torch.load(path, map_location="cpu", weights_only=True))
     env.close()
     return p, gen
 
@@ -56,31 +56,17 @@ class One:
 
 
 def record(arena, ev_pol, ch_pol, mp, ep, max_steps):
-    """Record a full stochastic replay; returns (frames, outcome, length)."""
-    env = OriArenaVecEnv("evader", 1, One(arena), mp, ep,
-                         opponent=frozen_policy(ch_pol, deterministic=True), seed=7)
-    obs = env.reset()
-    frames = []
-    ph = env.phys
-    outcome, ln = "timeout", max_steps
-    for t in range(max_steps):
-        a = ev_pol.predict(obs, deterministic=False)[0]
-        obs, _, done, infos = env.step(a)
-        frames.append({
-            "t": t,
-            "ev": (float(ph.x[0]), float(ph.y[0])),
-            "ch": (float(ph.x[1]), float(ph.y[1])),
-            "ev_act": env.prev_full[0].copy(),
-            "ch_act": env.prev_full[1].copy(),
-            "ev_agg": env.ev_agg[0].copy(),
-            "ch_agg": env.ch_agg[0].copy(),
-        })
-        if done[0] and "episode" in infos[0]:
-            outcome = infos[0]["outcome"]
-            ln = infos[0]["episode"]["l"]
-            break
-    env.close()
-    return frames, outcome, ln
+    """Record a full stochastic replay; returns (frames, outcome, length).
+
+    Thin wrapper over oripark.render.ReplayRecorder so the GIF tools and the
+    renderer cannot drift apart. (This file used to carry its own copy of the
+    loop, which appended the frame AFTER the env's auto-reset — every clip
+    therefore ended on the respawned agent instead of the escape.)
+    """
+    rec = ReplayRecorder(arena, ev_pol, ch_pol, mp, ep, deterministic=False, seed=7)
+    frames, outcome = rec.run(max_steps)
+    rec.close()
+    return frames, outcome, len(frames)
 
 
 def main():
@@ -104,7 +90,14 @@ def main():
 
     ch, gen = load(os.path.join(args.run, "chaser.zip"), "chaser", tp, mp, ep, mu)
     ev, _ = load(os.path.join(args.run, "evader.zip"), "evader", tp, mp, ep, mu)
-    base, _ = load(os.path.join(args.run, "evader_init.pt"), "evader", tp, mp, ep, mu)
+    # the "before" policy: the true pre-training checkpoint, not pool_ev_0.pt
+    # (which is an early TRAINED pool snapshot -- see oripark/baselines.py)
+    from oripark.baselines import find_baseline
+    base_path, base_label = find_baseline(args.run)
+    if base_path is None:
+        base_path, base_label = os.path.join(args.run, "evader_init.pt"), "init"
+    base, _ = load(base_path, "evader", tp, mp, ep, mu)
+    print(f"before-panel policy: {base_label} ({base_path})", flush=True)
 
     # ---- scan candidates with the trained evader, recording frames
     chosen_frames = None
@@ -131,13 +124,14 @@ def main():
     torch.manual_seed(2000)
     np.random.seed(2000)
     un_fr, un_out, un_ln = record(a, base.policy, ch.policy, mp, ep, args.max_steps)
-    print(f"untrained: {un_out} (len {un_ln})")
+    print(f"before: {un_out} (len {un_ln})")
 
     stem = os.path.splitext(args.out)[0]
     p1 = f"{stem}_untrained_{un_out}.gif"
     p2 = f"{stem}_trained_{tr_out}.gif"
-    make_gif(un_fr, a, mp, p1, label="UNTRAINED", scale=args.scale, fps=args.fps)
-    make_gif(tr_fr, a, mp, p2, label="TRAINED", scale=args.scale, fps=args.fps)
+    make_gif(un_fr, a, mp, p1, label=f"BEFORE ({base_label})", scale=args.scale,
+             fps=args.fps)
+    make_gif(tr_fr, a, mp, p2, label="AFTER (trained)", scale=args.scale, fps=args.fps)
     print(f"wrote {p1}\nwrote {p2}")
 
     # side-by-side
