@@ -252,19 +252,20 @@ def test_play_episodes_counts_every_outcome():
     assert stub.closed
 
 
-def test_artifact_tables_share_one_denominator():
+def test_artifact_tables_share_one_denominator(tmp_path):
     """Every escape-rate artifact must show escaped/n with n = all finished
     episodes, and the outcome columns must sum to n."""
     import re
     import subprocess
     import sys
+    report = tmp_path / "_t_metric.md"
     out = subprocess.run(
         [sys.executable, "hardarena.py", "--run", "results/run17",
          "--chaser-run", "results/run17", "--matches", "6", "--chaser",
-         "stoch", "--set", "07", "--expert", "--out", "/tmp/_t_metric.md"],
+         "stoch", "--set", "07", "--expert", "--out", str(report)],
         capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=900)
     assert out.returncode == 0, out.stderr[-2000:]
-    text = open("/tmp/_t_metric.md").read()
+    text = report.read_text()
     rows = [l for l in text.splitlines() if l.startswith("| ") and "%" in l]
     assert rows, text
     for line in rows:
@@ -276,6 +277,38 @@ def test_artifact_tables_share_one_denominator():
         assert sum(nums) == n, f"outcome columns must sum to n: {line}"
         assert "%" in cells[2], f"survival column missing: {line}"
         assert abs(pct - 100 * esc / n) < 0.6, f"percent must be esc/n: {line}"
+
+
+def test_demo_scratch_frames_use_a_private_directory():
+    """Comparison scratch frames must not live at a shared, guessable path.
+
+    make_gif saves with an ordinary open('w+b'), which follows a pre-created
+    symlink and truncates its target, so the fixed /tmp/ori_frame_*.gif names
+    let another local account redirect the operator's write. mkdtemp() gives a
+    unique 0700 directory per run instead.
+    """
+    import shutil
+    import stat
+
+    import demo
+
+    d1 = demo.scratch_frames_dir()
+    d2 = demo.scratch_frames_dir()
+    try:
+        assert d1 != d2, "scratch frames dir must be unique per run"
+        assert os.path.basename(d1).startswith("ori-demo-")
+        assert stat.S_IMODE(os.stat(d1).st_mode) == 0o700
+    finally:
+        shutil.rmtree(d1, ignore_errors=True)
+        shutil.rmtree(d2, ignore_errors=True)
+
+
+def test_cli_tools_do_not_write_fixed_shared_tmp_paths():
+    """No CLI tool may pick a constant path under the shared /tmp."""
+    for name in ("demo.py", "gifdemo.py"):
+        with open(os.path.join(PROJECT_ROOT, name)) as fh:
+            src = fh.read()
+        assert '"/tmp/' not in src, f"{name} writes a fixed /tmp path"
 
 
 def test_legacy_obs_flag_restores_the_training_time_scaling(mp, ep):

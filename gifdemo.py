@@ -72,7 +72,7 @@ def record(arena, ev_pol, ch_pol, mp, ep, max_steps):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="results/run14")
-    ap.add_argument("--out", default="/tmp/hero.gif")
+    ap.add_argument("--out", default="results/hero.gif")
     ap.add_argument("--max-steps", type=int, default=800)
     ap.add_argument("--seed0", type=int, default=4242)
     ap.add_argument("--scan", type=int, default=120)

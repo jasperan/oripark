@@ -7,7 +7,9 @@ Usage:
 """
 import argparse
 import os
+import shutil
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -42,6 +44,17 @@ def load_policy(pt_path: str, role: str, tp: TrainParams, mp: MoveParams,
     ppo.policy.load_state_dict(sd)
     env.close()
     return ppo
+
+
+def scratch_frames_dir() -> str:
+    """Private per-run directory for the comparison clips' scratch frames.
+
+    These frames are transient and operator-invisible, so they must not live
+    at a guessable name under the shared /tmp: make_gif saves with an ordinary
+    open('w+b'), which follows a pre-created symlink and truncates its target.
+    mkdtemp() gives an unguessable 0700 directory instead.
+    """
+    return tempfile.mkdtemp(prefix="ori-demo-")
 
 
 def main():
@@ -114,13 +127,16 @@ def main():
         # vertical side-by-side comparison GIF
         from PIL import Image
         imgs = []
-        for fr, out, label in clips:
-            sel = fr[::2]
-            # reuse make_gif temp frames
-            p = f"/tmp/ori_frame_{label.split()[0].lower()}.gif"
-            make_gif(fr, arena, mp, p, label=label, scale=args.scale, fps=args.fps)
-            im = Image.open(p)
-            imgs.append(list(iter_frames(im)))
+        tmp_dir = scratch_frames_dir()
+        try:
+            for fr, out, label in clips:
+                # reuse make_gif temp frames, inside a private per-run directory
+                p = os.path.join(tmp_dir, f"frame_{label.split()[0].lower()}.gif")
+                make_gif(fr, arena, mp, p, label=label, scale=args.scale, fps=args.fps)
+                with Image.open(p) as im:
+                    imgs.append(list(iter_frames(im)))
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
         h = max(len(a) for a in imgs)
         out_frames = []
         for k in range(h):
